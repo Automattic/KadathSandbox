@@ -1,0 +1,30 @@
+# Snuffleupagus policy for the sandbox: observe everything, block nothing.
+sp.log_media("php");
+
+sp.disable_function.function("assert").dump("/var/log/sandbox/sp-dumps").drop().simulation();
+sp.disable_function.function("system").dump("/var/log/sandbox/sp-dumps").drop().simulation();
+sp.disable_function.function("exec").dump("/var/log/sandbox/sp-dumps").drop().simulation();
+sp.disable_function.function("shell_exec").dump("/var/log/sandbox/sp-dumps").drop().simulation();
+sp.disable_function.function("passthru").dump("/var/log/sandbox/sp-dumps").drop().simulation();
+sp.disable_function.function("proc_open").dump("/var/log/sandbox/sp-dumps").drop().simulation();
+sp.disable_function.function("popen").dump("/var/log/sandbox/sp-dumps").drop().simulation();
+sp.disable_function.function("pcntl_exec").dump("/var/log/sandbox/sp-dumps").drop().simulation();
+sp.disable_function.function("mail").dump("/var/log/sandbox/sp-dumps").drop().simulation();
+sp.disable_function.function("curl_exec").dump("/var/log/sandbox/sp-dumps").drop().simulation();
+sp.disable_function.function("file_put_contents").dump("/var/log/sandbox/sp-dumps").drop().simulation();
+sp.disable_function.function("fwrite").dump("/var/log/sandbox/sp-dumps").drop().simulation();
+sp.disable_function.function("move_uploaded_file").dump("/var/log/sandbox/sp-dumps").drop().simulation();
+sp.disable_function.function("unserialize").dump("/var/log/sandbox/sp-dumps").drop().simulation();
+sp.disable_function.function("base64_decode").dump("/var/log/sandbox/sp-dumps").drop().simulation();
+sp.disable_function.function("gzinflate").dump("/var/log/sandbox/sp-dumps").drop().simulation();
+sp.disable_function.function("gzuncompress").dump("/var/log/sandbox/sp-dumps").drop().simulation();
+sp.disable_function.function("str_rot13").dump("/var/log/sandbox/sp-dumps").drop().simulation();
+
+# Remote or stream-wrapper includes (droppers): log the URL, let it happen so mitmproxy sees the fetch.
+sp.disable_function.function("include").value_r("^(https?|ftp|php|data|phar|expect|compress\\.)").dump("/var/log/sandbox/sp-dumps").drop().simulation();
+sp.disable_function.function("include_once").value_r("^(https?|ftp|php|data|phar|expect|compress\\.)").dump("/var/log/sandbox/sp-dumps").drop().simulation();
+sp.disable_function.function("require").value_r("^(https?|ftp|php|data|phar|expect|compress\\.)").dump("/var/log/sandbox/sp-dumps").drop().simulation();
+sp.disable_function.function("require_once").value_r("^(https?|ftp|php|data|phar|expect|compress\\.)").dump("/var/log/sandbox/sp-dumps").drop().simulation();
+
+# Dangerous calls made from inside eval(): log them (simulation), never block.
+sp.eval_blacklist.list("system,exec,shell_exec,passthru,proc_open,popen,pcntl_exec,curl_exec,file_put_contents,fwrite,mail").simulation();

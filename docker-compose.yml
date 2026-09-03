@@ -103,7 +103,7 @@ services:
     cpus: 2
     tmpfs:
       - /tmp:size=256m,mode=1777
-      - /run:size=16m
+      - /run:size=16m,mode=1777
     volumes:
       - wp_html:/var/www/html
       - gateway_ca:/gateway-ca:ro
