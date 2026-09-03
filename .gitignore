@@ -1,6 +1,7 @@
 .env
-samples/**
+samples/*/*
 !samples/*/.gitkeep
-artifacts/**
-!artifacts/**/.gitkeep
+artifacts/*/*
+!artifacts/*/.gitkeep
+artifacts/*.log
 .superpowers/

@@ -1,0 +1,158 @@
+name: kadath
+
+networks:
+  sandbox_internal:
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+  sandbox_mgmt:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.enable_ip_masquerade: "false"
+      com.docker.network.bridge.enable_icc: "false"
+    ipam:
+      config:
+        - subnet: 172.31.0.0/24
+  sandbox_egress:
+    driver: bridge
+
+volumes:
+  wp_html:
+  db_data:
+  gateway_ca:
+
+services:
+  db:
+    image: mariadb:11.8
+    networks:
+      sandbox_internal:
+        ipv4_address: 172.30.0.3
+    environment:
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-rootsandbox}
+      MARIADB_DATABASE: wordpress
+      MARIADB_USER: wordpress
+      MARIADB_PASSWORD: ${DB_PASSWORD:-sandbox}
+    volumes:
+      - db_data:/var/lib/mysql
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  gateway:
+    build: ./gateway
+    cap_add: [NET_ADMIN]
+    networks:
+      sandbox_internal:
+        ipv4_address: 172.30.0.2
+      sandbox_egress: {}
+    ports:
+      - "127.0.0.1:8081:8081"
+    volumes:
+      - gateway_ca:/gateway-ca
+      - ./artifacts:/artifacts
+    environment:
+      MITMWEB_PASSWORD: ${MITMWEB_PASSWORD:-sandbox}
+      MITM_EXTRA_ARGS: ${MITM_EXTRA_ARGS:-}
+    healthcheck:
+      test: ["CMD", "sh", "-c", "test -r /gateway-ca/mitmproxy-ca-cert.pem && iptables -t nat -S PREROUTING | grep -q 'dport 443'"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+
+  wpnet:
+    image: alpine:3.20
+    command: ["sleep", "infinity"]
+    init: true
+    networks:
+      sandbox_internal:
+        ipv4_address: 172.30.0.10
+      sandbox_mgmt:
+        ipv4_address: 172.31.0.10
+    ports:
+      - "127.0.0.1:8080:8080"
+    sysctls:
+      net.ipv6.conf.all.disable_ipv6: 1
+    volumes:
+      - ./wordpress/resolv.conf:/etc/resolv.conf:ro
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    read_only: true
+
+  netguard:
+    build: ./netguard
+    network_mode: "service:wpnet"
+    cap_add: [NET_ADMIN]
+    restart: "no"
+    depends_on:
+      wpnet:
+        condition: service_started
+
+  wordpress:
+    build: ./wordpress
+    network_mode: "service:wpnet"
+    user: "33:33"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 512
+    mem_limit: 1g
+    cpus: 2
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+      - /run:size=16m
+    volumes:
+      - wp_html:/var/www/html
+      - gateway_ca:/gateway-ca:ro
+      - ./samples/plugins:/samples/plugins:ro
+      - ./samples/themes:/samples/themes:ro
+      - ./samples/webroot:/samples/webroot:ro
+      - ./artifacts/xdebug:/var/log/sandbox/xdebug
+      - ./artifacts/sp-dumps:/var/log/sandbox/sp-dumps
+      - ./artifacts/php:/var/log/sandbox/php
+      - ./wordpress/resolv.conf:/etc/resolv.conf:ro
+    environment:
+      DB_HOST: 172.30.0.3
+      DB_NAME: wordpress
+      DB_USER: wordpress
+      DB_PASSWORD: ${DB_PASSWORD:-sandbox}
+      WP_URL: http://127.0.0.1:8080
+      WP_ADMIN_USER: ${WP_ADMIN_USER:-admin}
+      WP_ADMIN_PASSWORD: ${WP_ADMIN_PASSWORD:-sandbox}
+      WP_ADMIN_EMAIL: admin@sandbox.invalid
+      HOME: /tmp
+      WP_CLI_CACHE_DIR: /tmp/wp-cli-cache
+    depends_on:
+      db:
+        condition: service_healthy
+      gateway:
+        condition: service_healthy
+      netguard:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "-o", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 40s
+
+  tracer:
+    build: ./tracer
+    profiles: [trace]
+    pid: "service:wordpress"
+    privileged: true
+    network_mode: none
+    stdin_open: true
+    tty: true
+    volumes:
+      - /sys/kernel/debug:/sys/kernel/debug
+      - /sys/kernel/tracing:/sys/kernel/tracing
+      - /sys/fs/bpf:/sys/fs/bpf
+      - ./artifacts/strace:/artifacts/strace
+      - ./tracer/scripts:/opt/tracer:ro
+    depends_on:
+      wordpress:
+        condition: service_started
