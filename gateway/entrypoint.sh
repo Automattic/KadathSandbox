@@ -3,7 +3,9 @@
 set -euo pipefail
 
 INT_IP="172.30.0.2"
-INT="$(ip -o -4 addr show | awk -v ip="$INT_IP" '$4 ~ "^"ip"/" {print $2}')"
+# index(...) == 1 is a literal prefix match, not a regex -- avoids "." in INT_IP
+# being interpreted as "any character" (which would also match e.g. 172x30x0x2).
+INT="$(ip -o -4 addr show | awk -v ip="$INT_IP" 'index($4, ip "/") == 1 {print $2}')"
 EGR="$(ip -o -4 addr show | awk -v ifn="$INT" '$2 != "lo" && $2 != ifn {print $2}' | head -n1)"
 
 if [ -z "$INT" ] || [ -z "$EGR" ]; then
@@ -42,8 +44,11 @@ iptables -S INPUT
 tcpdump -i "$INT" -U -w "/artifacts/pcap/sandbox-${TS}.pcap" >/dev/null 2>&1 &
 
 # --- human-readable log of everything that is not HTTP/HTTPS/DNS (all of it gets dropped)
+# "not src host $INT_IP" excludes the gateway's own traffic (e.g. DNS replies from
+# dnsmasq, whose source port 53 but destination is an ephemeral port would otherwise
+# match "udp and not dst port 53") so only packets the sandbox itself sent are logged.
 tcpdump -i "$INT" -l -nn -tttt \
-  '(tcp[tcpflags] & (tcp-syn|tcp-ack) == tcp-syn and not dst port 80 and not dst port 443 and not dst port 53) or (udp and not dst port 53) or (not tcp and not udp and not arp)' \
+  "not src host $INT_IP and ((tcp[tcpflags] & (tcp-syn|tcp-ack) == tcp-syn and not dst port 80 and not dst port 443 and not dst port 53) or (udp and not dst port 53) or (not tcp and not udp and not arp))" \
   >> /artifacts/dropped.log 2>/dev/null &
 
 # --- DNS: every lookup from the sandbox is answered here and logged.
