@@ -1,0 +1,5 @@
+.env
+samples/**
+!samples/*/.gitkeep
+artifacts/**
+!artifacts/**/.gitkeep
