@@ -73,7 +73,7 @@ services:
       sandbox_mgmt:
         ipv4_address: 172.31.0.10
     ports:
-      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:8088:8080"
     sysctls:
       net.ipv6.conf.all.disable_ipv6: 1
     volumes:
@@ -119,7 +119,7 @@ services:
       DB_NAME: wordpress
       DB_USER: wordpress
       DB_PASSWORD: ${DB_PASSWORD:-sandbox}
-      WP_URL: http://127.0.0.1:8080
+      WP_URL: http://127.0.0.1:8088
       WP_ADMIN_USER: ${WP_ADMIN_USER:-admin}
       WP_ADMIN_PASSWORD: ${WP_ADMIN_PASSWORD:-sandbox}
       WP_ADMIN_EMAIL: admin@sandbox.invalid
