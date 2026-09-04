@@ -15,3 +15,10 @@ def test_unknown_directive_raises_with_line():
     with pytest.raises(recipe.RecipeError) as e:
         recipe.parse("GET /a\nFROB /b\n")
     assert e.value.line_no == 2
+
+def test_bare_post_raises():
+    import pytest
+    from kadath import recipe
+    with pytest.raises(recipe.RecipeError) as e:
+        recipe.parse("GET /a\nPOST\n")
+    assert e.value.line_no == 2

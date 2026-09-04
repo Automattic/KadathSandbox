@@ -33,6 +33,8 @@ def parse(text):
             out.append(Action("get", rest.strip()))
         elif verb == "POST":
             pp = rest.split(None, 1)
+            if not pp:
+                raise RecipeError("POST needs <path> [body]", i)
             out.append(Action("post", pp[0], pp[1].strip() if len(pp) > 1 else ""))
         else:
             raise RecipeError(f"unknown directive {verb!r}", i)

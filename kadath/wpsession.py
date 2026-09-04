@@ -2,6 +2,7 @@
 over http://127.0.0.1:8088. No third-party deps."""
 import urllib.request
 import urllib.parse
+import urllib.error
 import http.cookiejar
 
 
@@ -16,7 +17,9 @@ class WpSession:
     def _req(self, path, data=None):
         url = self.base + path
         body = data.encode() if data is not None else None
-        r = urllib.request.Request(url, data=body, method="POST" if data is not None else "GET")
+        headers = {"Content-Type": "application/x-www-form-urlencoded"} if body is not None else {}
+        r = urllib.request.Request(url, data=body, headers=headers,
+                                    method="POST" if data is not None else "GET")
         try:
             with self.opener.open(r, timeout=60) as resp:
                 return resp.getcode()
@@ -28,7 +31,7 @@ class WpSession:
             {"log": user, "pwd": pw, "wp-submit": "Log In", "testcookie": "1"})
         self._req("/wp-login.php")  # set the test cookie
         code = self._req("/wp-login.php", body)
-        self.actions.append(f"LOGIN {user}")
+        self.actions.append(f"LOGIN {user} -> {code}")
         return code
 
     def get(self, path):
