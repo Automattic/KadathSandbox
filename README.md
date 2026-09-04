@@ -67,6 +67,32 @@ Open this directory in Claude Code and the skills are discovered automatically (
 picks up newly added skills). Elsewhere, install with `/plugin marketplace add Automattic/KadathSandbox`
 then `/plugin install kadath-sandbox@kadath`. A detonation writes its report to `reports/<slug>-<ts>/`.
 
+## One-command detonation
+
+For a scripted run without an agent:
+
+    make detonate SAMPLE=path/to/sample.php
+    # or, with options:
+    python3 bin/kadath detonate path/to/sample.php [--recipe r.kadath] [--reset] [--json]
+
+It brings the stack up, runs the self-test gate once per build, isolates any
+prior sample, stages and triggers this one by type, snapshots, and writes
+`reports/<slug>-<ts>/` with `run.env`, `summary.json` (DB diff, call chain,
+network summary, artifact list), and a pre-filled `iocs.json`. The narrative
+report and YARA rule are still the `kadath-analyze` skill's job, working from
+that structured input.
+
+For a sample the defaults can't drive (a webshell needing specific parameters,
+or an admin action), drop a `<sample>.kadath` recipe next to it:
+
+    LOGIN admin sandbox
+    GET  /shell.php?c=id
+    POST /wp-admin/admin-ajax.php  action=foo&x=1
+
+Only one detonation runs at a time. The command never edits the containment
+configuration; to reach a private lab target use the `GATEWAY_BLOCKED_DESTS`
+override described above.
+
 ## Loading a sample
 
 **Drop-in (webshells, loose PHP, unpacked plugins/themes):**
