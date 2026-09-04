@@ -7,3 +7,4 @@ artifacts/*.log
 .superpowers/
 snapshots/
 reports/
+.kadath/
