@@ -53,6 +53,20 @@ Then:
 - WordPress: http://127.0.0.1:8088 (admin login from `.env`, default `admin` / `sandbox`)
 - mitmweb: http://127.0.0.1:8081 (password from `.env`, default `sandbox`)
 
+## Driving the sandbox with a Claude Code agent
+
+This repo ships four skills under `.claude/skills/` (also packaged as the `kadath-sandbox`
+plugin) so an agent can run the whole workflow:
+
+- **kadath-detonate** — stage a sample, trigger it through the traced path, mark the run.
+- **kadath-analyze** — read one run's artifacts into a report, `iocs.json`, and a draft YARA rule.
+- **kadath-syscalls** — attach strace/bpftrace to php-fpm for OS-level evidence.
+- **kadath-ops** — start, reset, snapshot, self-test, and troubleshoot without weakening containment.
+
+Open this directory in Claude Code and the skills are discovered automatically (a fresh session
+picks up newly added skills). Elsewhere, install with `/plugin marketplace add Automattic/KadathSandbox`
+then `/plugin install kadath-sandbox@kadath`. A detonation writes its report to `reports/<slug>-<ts>/`.
+
 ## Loading a sample
 
 **Drop-in (webshells, loose PHP, unpacked plugins/themes):**

@@ -6,3 +6,4 @@ artifacts/*/*
 artifacts/*.log
 .superpowers/
 snapshots/
+reports/

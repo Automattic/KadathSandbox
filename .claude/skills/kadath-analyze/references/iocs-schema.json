@@ -1,0 +1,56 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "KadathSandbox detonation IOCs",
+  "description": "Machine-readable indicators from one detonation. One object per run, written to reports/<slug>-<ts>/iocs.json.",
+  "type": "object",
+  "required": ["sample", "detonated_utc", "classification", "network", "indicators"],
+  "properties": {
+    "sample": {
+      "type": "object",
+      "required": ["filename", "sha256"],
+      "properties": {
+        "filename": { "type": "string" },
+        "path": { "type": "string" },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "md5": { "type": "string", "pattern": "^[0-9a-f]{32}$" },
+        "size_bytes": { "type": "integer" }
+      }
+    },
+    "detonated_utc": { "type": "string", "description": "ISO-8601, from run.env RUN_UTC" },
+    "classification": { "type": "string", "description": "e.g. wp-backdoor/create-hide-admin" },
+    "family": { "type": "string", "description": "threat-library family label if known" },
+    "network": {
+      "type": "object",
+      "required": ["observed"],
+      "properties": {
+        "observed": { "type": "boolean", "description": "true if the SAMPLE (not WP core) made network calls this run" },
+        "domains": { "type": "array", "items": { "type": "string" } },
+        "ips": { "type": "array", "items": { "type": "string" } },
+        "urls": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "indicators": {
+      "type": "array",
+      "description": "Every distinct indicator. type is one of the enum; value is the literal; evidence points at where it was observed.",
+      "items": {
+        "type": "object",
+        "required": ["type", "value"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "wp_user", "wp_user_email", "wp_password",
+              "wp_option", "wp_usermeta_key", "wp_cron_hook",
+              "plugin_slug", "theme_slug", "file_path", "file_hash",
+              "url", "domain", "ip",
+              "php_function", "hook", "string", "behavioural"
+            ]
+          },
+          "value": { "type": "string" },
+          "notes": { "type": "string" },
+          "evidence": { "type": "string", "description": "artifact or file:line the indicator came from" }
+        }
+      }
+    }
+  }
+}

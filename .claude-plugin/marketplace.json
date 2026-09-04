@@ -1,0 +1,14 @@
+{
+  "name": "kadath",
+  "owner": {
+    "name": "Automattic"
+  },
+  "plugins": [
+    {
+      "name": "kadath-sandbox",
+      "source": ".",
+      "description": "Skills for the KadathSandbox WordPress malware sandbox"
+    }
+  ],
+  "description": "Agent skills for the KadathSandbox WordPress malware sandbox"
+}
