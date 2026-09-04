@@ -21,6 +21,16 @@ URL = "http://127.0.0.1:8088"
 SERVICES = ["db", "gateway", "wpnet", "netcap", "wordpress"]
 
 
+def _type_from_staged(staged, root):
+    """Resolve the actual sample type from where stage.place put it."""
+    rel = os.path.relpath(staged, root)
+    if rel.startswith("samples/plugins/"):
+        return "plugin"
+    if rel.startswith("samples/themes/"):
+        return "theme"
+    return "webshell"
+
+
 def _wp(args):
     """Run wp inside the wordpress container (wrapper adds --skip-plugins)."""
     return sh(["docker", "compose", "exec", "-T", "wordpress", "wp"] + args,
@@ -78,6 +88,7 @@ def _flows(epoch):
             cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=120)
         return network.parse_flowdump(out.stdout)
     except Exception:
+        print("warning: flow extraction failed", file=sys.stderr)
         return []
 
 
@@ -99,6 +110,26 @@ def _credentials_from_trace(traces):
                     if login and pw:
                         creds.append({"login": login, "password": pw})
     return creds
+
+
+def _hash_sample(path):
+    """Return (sha256, md5) for a file, or for a directory a deterministic
+    hash over a sorted manifest of per-file hashes."""
+    if os.path.isfile(path):
+        data = open(path, "rb").read()
+        return hashlib.sha256(data).hexdigest(), hashlib.md5(data).hexdigest()
+    entries = []
+    for r, _d, files in os.walk(path):
+        for fn in sorted(files):
+            fp = os.path.join(r, fn)
+            rel = os.path.relpath(fp, path)
+            try:
+                h = hashlib.sha256(open(fp, "rb").read()).hexdigest()
+            except OSError:
+                h = ""
+            entries.append(f"{rel}\x00{h}")
+    manifest = "\n".join(sorted(entries)).encode()
+    return hashlib.sha256(manifest).hexdigest(), hashlib.md5(manifest).hexdigest()
 
 
 def _between(s, a, b):
@@ -133,7 +164,11 @@ def detonate(argv):
     # preflight: stack
     if not _healthy():
         print("bringing the stack up...", file=sys.stderr)
-        sh(["make", "up"], cwd=ROOT)
+        try:
+            sh(["make", "up"], cwd=ROOT)
+        except ShellError as e:
+            print(f"error: bringing the stack up failed\n{e.stderr}", file=sys.stderr)
+            return 1
 
     # preflight: self-test gate
     if not _selftest_ok():
@@ -160,12 +195,19 @@ def detonate(argv):
 
     try:
         if a.reset:
-            sh(["make", "reset"], cwd=ROOT)
-            sh(["make", "up"], cwd=ROOT)
+            try:
+                sh(["make", "reset"], cwd=ROOT)
+                sh(["make", "up"], cwd=ROOT)
+            except ShellError as e:
+                print(f"error: bringing the stack up failed\n{e.stderr}", file=sys.stderr)
+                return 1
         elif not a.keep_active:
             stage.isolate(ROOT, lambda args: _wp(["--skip-plugins"] + args))
 
         staged = stage.place(ROOT, a.sample, det)
+        if det.type == "zip":
+            det = detect.Detected(_type_from_staged(staged, ROOT), det.slug,
+                                  os.path.relpath(staged, ROOT))
         sh(["docker", "compose", "up", "-d", "--force-recreate", "--wait", "wordpress"], cwd=ROOT)
 
         # activation for plugin/theme (state change; wrapper keeps it untraced)
@@ -179,8 +221,7 @@ def detonate(argv):
         run_dir = os.path.join(ROOT, "reports", f"{det.slug}-{ts}")
         os.makedirs(run_dir, exist_ok=True)
         epoch = int(time.time())
-        sha256 = hashlib.sha256(open(a.sample, "rb").read()).hexdigest() if os.path.isfile(a.sample) else ""
-        md5 = hashlib.md5(open(a.sample, "rb").read()).hexdigest() if os.path.isfile(a.sample) else ""
+        sha256, md5 = _hash_sample(a.sample)
         dns_off = os.path.getsize(os.path.join(ROOT, "artifacts/dns/dns.log")) if os.path.exists(os.path.join(ROOT, "artifacts/dns/dns.log")) else 0
         drop_off = os.path.getsize(os.path.join(ROOT, "artifacts/dropped.log")) if os.path.exists(os.path.join(ROOT, "artifacts/dropped.log")) else 0
         before = _dbstate()
@@ -189,7 +230,11 @@ def detonate(argv):
         session = WpSession(URL)
         if a.recipe or os.path.exists(a.sample + ".kadath"):
             rpath = a.recipe or (a.sample + ".kadath")
-            actions = recipe.parse(open(rpath).read())
+            try:
+                actions = recipe.parse(open(rpath).read())
+            except (recipe.RecipeError, OSError) as e:
+                print(f"error: {e}", file=sys.stderr)
+                return 2
             if det.type in ("plugin", "theme", "directory-plugin", "directory-theme") and \
                not any(x.kind == "login" for x in actions):
                 actions = [recipe.Action("login", "admin", "sandbox")] + actions
