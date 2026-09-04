@@ -70,9 +70,13 @@ theme).
    - `--reset`: `make reset`, then continue.
    - Otherwise: deactivate every active plugin except the WordPress defaults
      (`akismet`, `hello`) via `wp --skip-plugins plugin deactivate`, switch to
-     a default theme, and delete every directory/file under `samples/plugins`,
-     `samples/themes`, `samples/webroot` except `.gitkeep`. This stops a
-     backdoor staged in a previous run from firing into this run's trace.
+     a default theme, delete every directory/file under `samples/plugins`,
+     `samples/themes`, `samples/webroot` except `.gitkeep`, and delete every
+     WordPress user except the install admin (`ID 1`). This stops a backdoor
+     staged in a previous run from firing into this run's trace, and clears the
+     DB users a prior persistence sample created so this run's `users_added`
+     diff reflects only what the current sample did. (Options and cron a prior
+     sample created are not auto-removed — use `--reset` for a fully clean DB.)
 3. **Stage.**
    - Detect type (see Type detection). Copy the sample into the matching
      `samples/` subdirectory. For a `.zip`, unpack to a temp dir, re-detect
