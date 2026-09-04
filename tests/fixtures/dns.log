@@ -1,0 +1,4 @@
+Sep  4 10:00:00 dnsmasq[41]: 1 172.30.0.10/5000 query[A] old-run.example from 172.30.0.10
+Sep  4 17:15:19 dnsmasq[41]: 6 172.30.0.10/51915 query[A] api.wordpress.org from 172.30.0.10
+Sep  4 17:15:19 dnsmasq[41]: 6 172.30.0.10/51915 reply api.wordpress.org is 66.6.42.251
+Sep  4 17:15:20 dnsmasq[41]: 7 172.30.0.10/51915 query[A] evil-c2.example from 172.30.0.10
