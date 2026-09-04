@@ -35,7 +35,11 @@ SYN='(tcp[tcpflags] & (tcp-syn|tcp-ack)) == tcp-syn'
 
 # What the sandbox is *allowed* to originate on the internal interface. Everything else
 # it sends there is either dropped by netguard or refused by the gateway, and is logged.
-ALLOWED="(tcp and dst host $GW and (dst port 80 or dst port 443 or dst port 53)) \
+# HTTP/HTTPS is matched by port only: in transparent mode the sandbox addresses the real
+# destination IP and the REDIRECT to mitmproxy happens later, in the gateway's PREROUTING,
+# so "dst host $GW" would never match those packets and every proxied connection would be
+# logged here as a drop.
+ALLOWED="(tcp and (dst port 80 or dst port 443)) \
   or (dst port 53 and (tcp or udp)) \
   or (tcp and dst host $DB and dst port 3306)"
 

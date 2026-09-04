@@ -67,12 +67,19 @@ docker compose up -d --force-recreate wordpress
 ```
 Activate plugins from wp-admin or with `docker compose exec wordpress wp plugin activate <name>`.
 
+The `wp` command inside the container runs with Xdebug off and with `--skip-plugins --skip-themes`.
+WP-CLI bootstraps WordPress and fires `init`, so without that an active malicious plugin would run
+inside every `wp` command, untraced, and its hooks would hide users and plugins from `wp user list`
+and `wp plugin list`. Skipping plugins gives you the unfiltered database state. Set `WP_LOAD_PLUGINS=1`
+when you deliberately want the sample loaded, and use wp-admin when you want activation-time
+behaviour traced.
+
 **Upload path (zips, to observe installer hooks):** wp-admin → Plugins → Add New → Upload, as a victim would.
 
 ## Analysing
 
 - Trigger the sample from your browser or `curl http://127.0.0.1:8088/...`. Each request writes one Xdebug trace.
-- `grep -n "eval\|base64_decode\|system" artifacts/xdebug/<latest>.xt` finds deobfuscation stages; the eval string is recorded in full.
+- `grep -n "eval\|base64_decode\|system" artifacts/xdebug/<latest>.xt` finds deobfuscation stages; eval strings and other values are recorded up to 64 KB each.
 - `artifacts/php/php-error.log` lists every hooked call with its arguments.
 - Open mitmweb, or replay later with `docker compose exec gateway mitmproxy -nr /artifacts/mitm/flows.mitm`.
 - `artifacts/dropped.log` shows what the sample put on the wire that was not HTTP/DNS. Note what it
@@ -142,7 +149,7 @@ Three artifacts grow without bound during a long detonation and are worth watchi
 - `artifacts/mitm/flows.mitm` — **not** capped. Every decrypted request and response body is
   appended. A sample downloading large payloads in a loop will fill your disk.
 - `artifacts/xdebug/` — one trace file per HTTP request, and traces of a busy request are large
-  (`collect_assignments=1`, `var_display_max_data=-1`). Not capped either.
+  (`collect_assignments=1`, values up to 64 KB each). Expect roughly 100 MB per WordPress page view. Not capped either.
 
 ```bash
 make snapshot     # copy artifacts/ + wordpress and gateway logs into snapshots/<timestamp>/

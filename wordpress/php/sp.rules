@@ -29,10 +29,12 @@ sp.disable_function.function("gzuncompress").dump("/var/log/sandbox/sp-dumps").d
 sp.disable_function.function("str_rot13").dump("/var/log/sandbox/sp-dumps").drop().simulation();
 
 # Remote or stream-wrapper includes (droppers): log the URL, let it happen so mitmproxy sees the fetch.
-sp.disable_function.function("include").value_r("^(https?|ftp|php|data|phar|expect|compress\\.)").dump("/var/log/sandbox/sp-dumps").drop().simulation();
-sp.disable_function.function("include_once").value_r("^(https?|ftp|php|data|phar|expect|compress\\.)").dump("/var/log/sandbox/sp-dumps").drop().simulation();
-sp.disable_function.function("require").value_r("^(https?|ftp|php|data|phar|expect|compress\\.)").dump("/var/log/sandbox/sp-dumps").drop().simulation();
-sp.disable_function.function("require_once").value_r("^(https?|ftp|php|data|phar|expect|compress\\.)").dump("/var/log/sandbox/sp-dumps").drop().simulation();
+# phar:// stays hooked (phar metadata deserialisation), except WP-CLI's own phar, which would
+# otherwise log hundreds of benign includes per `wp` command.
+sp.disable_function.function("include").value_r("^(https?|ftp|php|data|expect|compress\\.)|^phar://(?!(/usr/local/bin/)?wp-cli\\.phar)").dump("/var/log/sandbox/sp-dumps").drop().simulation();
+sp.disable_function.function("include_once").value_r("^(https?|ftp|php|data|expect|compress\\.)|^phar://(?!(/usr/local/bin/)?wp-cli\\.phar)").dump("/var/log/sandbox/sp-dumps").drop().simulation();
+sp.disable_function.function("require").value_r("^(https?|ftp|php|data|expect|compress\\.)|^phar://(?!(/usr/local/bin/)?wp-cli\\.phar)").dump("/var/log/sandbox/sp-dumps").drop().simulation();
+sp.disable_function.function("require_once").value_r("^(https?|ftp|php|data|expect|compress\\.)|^phar://(?!(/usr/local/bin/)?wp-cli\\.phar)").dump("/var/log/sandbox/sp-dumps").drop().simulation();
 
 # Dangerous calls made from inside eval(): log them (simulation), never block.
 sp.eval_blacklist.list("system,exec,shell_exec,passthru,proc_open,popen,pcntl_exec,curl_exec,file_put_contents,fwrite,mail").simulation();
