@@ -275,7 +275,8 @@ KadathSandbox/
 ## Containment invariants (must hold)
 
 - The engine only ever calls: `make up/reset/snapshot/selftest`,
-  `docker compose up/exec/logs/images`, and HTTP to `127.0.0.1:8088`.
+  `docker compose up/exec/logs/images/ps/cp` (ps and cp are read-only / copy trusted
+  engine code into the gateway), `mitmdump` inside the gateway, and HTTP to `127.0.0.1:8088`.
 - It never edits `docker-compose.yml`, `netguard`, `gateway`, or any container
   security setting; never adds a capability; never publishes a port.
 - The sample and every artifact are treated as data: parsed, hashed, quoted —
