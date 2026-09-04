@@ -1,4 +1,5 @@
 import os
+import zipfile
 from kadath import stage, detect
 
 def test_clear_samples_keeps_gitkeep(tmp_path):
@@ -40,3 +41,33 @@ def test_isolate_deactivates_and_clears(tmp_path):
     assert ["plugin", "deactivate", "evil"] in calls
     assert ["plugin", "deactivate", "akismet"] not in calls
     assert not (root / "samples" / "plugins" / "evil").exists()
+
+def _make_zip(path, files):
+    with zipfile.ZipFile(path, "w") as z:
+        for name, content in files.items():
+            z.writestr(name, content)
+
+def test_place_zip_wrapped_plugin(tmp_path):
+    root = tmp_path; (root / "samples" / "plugins").mkdir(parents=True)
+    z = tmp_path / "evil.zip"
+    _make_zip(z, {"evil/evil.php": "<?php\n/* Plugin Name: Evil */\n"})
+    d = detect.detect(str(z))            # type == "zip", slug == "evil"
+    staged = stage.place(str(root), str(z), d)
+    # the plugin main file must be exactly one level under samples/plugins/evil
+    assert os.path.isfile(os.path.join(root, "samples/plugins/evil/evil.php"))
+
+def test_place_zip_wrapped_theme(tmp_path):
+    root = tmp_path; (root / "samples" / "themes").mkdir(parents=True)
+    z = tmp_path / "th.zip"
+    _make_zip(z, {"th/style.css": "/*\nTheme Name: Th\n*/\n", "th/index.php": "<?php"})
+    d = detect.detect(str(z))
+    staged = stage.place(str(root), str(z), d)
+    assert os.path.isfile(os.path.join(root, "samples/themes/th/style.css"))
+
+def test_place_zip_webshell(tmp_path):
+    root = tmp_path; (root / "samples" / "webroot").mkdir(parents=True)
+    z = tmp_path / "sh.zip"
+    _make_zip(z, {"c99.php": "<?php echo 1;"})
+    d = detect.detect(str(z))
+    staged = stage.place(str(root), str(z), d)
+    assert os.path.isfile(os.path.join(root, "samples/webroot/c99.php"))
