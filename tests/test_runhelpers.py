@@ -16,3 +16,15 @@ def test_hash_sample_dir(tmp_path):
     d = tmp_path / "plug"; d.mkdir(); (d / "main.php").write_bytes(b"<?php")
     s, m = run._hash_sample(str(d))
     assert len(s) == 64 and len(m) == 32
+
+def test_apply_slug_plugin_updates_dest():
+    from kadath import detect
+    d = detect.Detected("plugin", "old", "samples/plugins/old")
+    n = run._apply_slug(d, "new")
+    assert n.slug == "new" and n.dest == "samples/plugins/new"
+
+def test_apply_slug_webshell_keeps_dest():
+    from kadath import detect
+    d = detect.Detected("webshell", "old", "samples/webroot/shell.php")
+    n = run._apply_slug(d, "new")
+    assert n.dest == "samples/webroot/shell.php"

@@ -1,5 +1,5 @@
 """mitmproxy addon. Run inside the gateway:
-   mitmdump -nq -r /artifacts/mitm/flows.mitm -s /opt/kadath/flowdump.py
+   mitmdump -nq -r /artifacts/mitm/flows.mitm -s /tmp/flowdump.py
 with env RUN_EPOCH set. Emits one JSON line per flow in the run window."""
 import json
 import os

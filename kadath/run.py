@@ -7,6 +7,7 @@ import glob
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -141,6 +142,14 @@ def _between(s, a, b):
     return s[i:j] if j > i else None
 
 
+def _apply_slug(det, slug):
+    """Return det with slug overridden and the plugin/theme dest segment updated."""
+    new_dest = det.dest
+    if det.type in ("plugin", "theme"):
+        new_dest = re.sub(r"/[^/]+$", "/" + slug, det.dest)
+    return detect.Detected(det.type, slug, new_dest)
+
+
 def detonate(argv):
     ap = argparse.ArgumentParser(prog="kadath detonate")
     ap.add_argument("sample")
@@ -159,7 +168,7 @@ def detonate(argv):
         print(f"error: {e}", file=sys.stderr)
         return 2
     if a.slug:
-        det = detect.Detected(det.type, a.slug, det.dest)
+        det = _apply_slug(det, a.slug)
 
     # preflight: stack
     if not _healthy():
@@ -218,6 +227,7 @@ def detonate(argv):
 
         # mark + before-state
         ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         run_dir = os.path.join(ROOT, "reports", f"{det.slug}-{ts}")
         os.makedirs(run_dir, exist_ok=True)
         epoch = int(time.time())
@@ -267,7 +277,7 @@ def detonate(argv):
                        "sha256": sha256, "md5": md5,
                        "size_bytes": os.path.getsize(a.sample) if os.path.isfile(a.sample) else 0,
                        "type": det.type}
-        run_meta = {"epoch": epoch, "utc": ts, "slug": det.slug,
+        run_meta = {"epoch": epoch, "utc": iso, "slug": det.slug,
                     "trigger_actions": session.actions, "reset": a.reset}
         creds = _credentials_from_trace(traces)
         s = summary.build_summary(
@@ -276,12 +286,12 @@ def detonate(argv):
             net, {"traces": traces, "sp_dumps": sp_dumps, "pcaps": pcaps}, warnings)
         iocs = summary.build_iocs(
             {k: sample_meta[k] for k in ("filename", "path", "sha256", "md5", "size_bytes")},
-            ts, f"wp-sample/{det.type}", db_diff, traceparse.files_written(traces), net, creds)
+            iso, f"wp-sample/{det.type}", db_diff, traceparse.files_written(traces), net, creds)
         summary.validate_iocs(iocs)
 
         # run.env
         with open(os.path.join(run_dir, "run.env"), "w") as f:
-            f.write(f"RUN_EPOCH={epoch}\nRUN_UTC={ts}\nSLUG={det.slug}\n")
+            f.write(f"RUN_EPOCH={epoch}\nRUN_UTC={iso}\nSLUG={det.slug}\n")
             f.write(f"SAMPLE_SRC={os.path.abspath(a.sample)}\n")
             f.write(f"SAMPLE_SHA256={sha256}\nSAMPLE_MD5={md5}\nSAMPLE_TYPE={det.type}\n")
             f.write("TRIGGER_ACTIONS=" + " | ".join(session.actions) + "\n")
