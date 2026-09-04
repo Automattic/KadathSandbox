@@ -1,0 +1,16 @@
+Version: 3.5.3
+File format: 4
+TRACE START [2026-09-04 16:12:00.000000]
+1	0	0	0.000891	438216	{main}	1		/samples/webroot/probe.php	0	0
+2	1	0	0.000934	438248	header	0		/samples/webroot/probe.php	3	1	'Content-Type: text/plain'
+2	1	1	0.000950	438248
+2	1	R			NULL
+2	2	0	0.001063	438888	eval	1	'return 1+1;'	/samples/webroot/probe.php	5	0
+2	2	R			2
+2	3	0	0.001106	438400	system	0		/samples/webroot/probe.php	8	1	'id'
+2	3	R			'uid=33(www-data)'
+2	4	0	0.002979	439320	file_get_contents	0		/samples/webroot/probe.php	11	1	'https://example.com/'
+2	5	0	0.167980	441136	fsockopen	0		/samples/webroot/probe.php	14	5	'1.1.1.1'	6667	NULL	NULL	3
+2	6	0	3.171270	441120	file_put_contents	0		/samples/webroot/probe.php	16	2	'/tmp/x'	'data'
+2	7	0	3.171348	441176	gethostbyname	0		/samples/webroot/probe.php	19	1	'selftest-x.invalid'
+TRACE END   [2026-09-04 16:12:03.200000]
