@@ -1,6 +1,14 @@
 # Snuffleupagus policy for the sandbox: observe everything, block nothing.
 sp.log_media("php");
 
+# Snuffleupagus logs through PHP's error_log, so a sample that repoints error_log at
+# /dev/null silences the whole hooked-call record. Pin it read-only: ini_set() on it
+# now fails and the value from sandbox.ini stands for the life of the request.
+# ini_protection is off by default in 0.14 and has to be switched on explicitly; the
+# global policy stays read-write, so this is the only setting that is locked.
+sp.ini_protection.enable();
+sp.ini.key("error_log").ro();
+
 sp.disable_function.function("assert").dump("/var/log/sandbox/sp-dumps").drop().simulation();
 sp.disable_function.function("system").dump("/var/log/sandbox/sp-dumps").drop().simulation();
 sp.disable_function.function("exec").dump("/var/log/sandbox/sp-dumps").drop().simulation();
