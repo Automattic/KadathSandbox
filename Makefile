@@ -1,4 +1,4 @@
-.PHONY: up down reset selftest snapshot logs trace shell build
+.PHONY: up down reset selftest snapshot logs trace shell build detonate
 
 up:
 	docker compose up -d --build --wait db gateway wpnet netcap wordpress
@@ -40,3 +40,11 @@ trace:
 
 shell:
 	docker compose exec wordpress bash
+
+# Detonate a sample end to end. SAMPLE is required; RECIPE and RESET optional.
+#   make detonate SAMPLE=path/to/sample.php
+detonate:
+	@test -n "$(SAMPLE)" || { echo "usage: make detonate SAMPLE=<path> [RECIPE=<path>] [RESET=1]"; exit 2; }
+	python3 bin/kadath detonate "$(SAMPLE)" \
+	  $(if $(RECIPE),--recipe "$(RECIPE)") \
+	  $(if $(RESET),--reset)
