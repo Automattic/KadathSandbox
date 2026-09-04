@@ -36,10 +36,14 @@ def test_isolate_deactivates_and_clears(tmp_path):
         calls.append(args)
         if args[:2] == ["plugin", "list"]:
             return "evil\nakismet\n"
+        if args[:2] == ["user", "list"]:
+            return "1\n8\n"
         return ""
     actions = stage.isolate(str(root), fake_wp)
     assert ["plugin", "deactivate", "evil"] in calls
     assert ["plugin", "deactivate", "akismet"] not in calls
+    assert ["user", "delete", "8", "--yes"] in calls
+    assert ["user", "delete", "1", "--yes"] not in calls
     assert not (root / "samples" / "plugins" / "evil").exists()
 
 def _make_zip(path, files):

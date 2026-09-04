@@ -30,6 +30,14 @@ def isolate(root, wp_exec):
         wp_exec(["plugin", "deactivate", name])
         actions.append(f"deactivate {name}")
     wp_exec(["theme", "activate", "twentytwentyfour"])
+    # remove users a prior sample created (keep the install admin, ID 1) so
+    # this run's users_added diff reflects only the current sample
+    ids = wp_exec(["user", "list", "--field=ID"])
+    for uid in ids.split():
+        uid = uid.strip()
+        if uid and uid != "1":
+            wp_exec(["user", "delete", uid, "--yes"])
+            actions.append(f"delete user {uid}")
     clear_samples(root)
     actions.append("cleared samples/")
     return actions
