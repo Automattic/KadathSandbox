@@ -1,8 +1,13 @@
 #!/usr/bin/env bpftrace
 // Syscalls of interest from PHP-FPM workers. Filters on comm because bpftrace reports
 // PIDs from the initial namespace, which differ from the ones pgrep shows in the container.
+//
+// Run it as:  bpftrace /opt/tracer/phpfpm.bt | cat -v
+// The paths and arguments printed here are bytes the sample chose; `cat -v` renders
+// escape sequences printable instead of letting your terminal act on them.
 
-BEGIN { printf("tracing php-fpm: openat, connect, execve, unlinkat. Ctrl-C to stop.\n"); }
+BEGIN { printf("tracing php-fpm: openat, connect, execve, unlinkat. Ctrl-C to stop.\n");
+        printf("pipe this through `cat -v`: the strings below are sample-controlled.\n"); }
 
 tracepoint:syscalls:sys_enter_openat /comm == "php-fpm"/
 {

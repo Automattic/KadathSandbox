@@ -5,3 +5,4 @@ artifacts/*/*
 !artifacts/*/.gitkeep
 artifacts/*.log
 .superpowers/
+snapshots/
