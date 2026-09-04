@@ -29,6 +29,9 @@ services:
       sandbox_internal:
         ipv4_address: 172.30.0.3
     environment:
+      # root is reachable over the internal network from the sample's container, so
+      # confine it to the db container's own loopback. The wordpress user stays remote.
+      MARIADB_ROOT_HOST: localhost
       MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-rootsandbox}
       MARIADB_DATABASE: wordpress
       MARIADB_USER: wordpress
@@ -44,6 +47,7 @@ services:
 
   gateway:
     build: ./gateway
+    init: true
     cap_add: [NET_ADMIN]
     networks:
       sandbox_internal:
@@ -57,8 +61,9 @@ services:
     environment:
       MITMWEB_PASSWORD: ${MITMWEB_PASSWORD:-sandbox}
       MITM_EXTRA_ARGS: ${MITM_EXTRA_ARGS:-}
+      GATEWAY_BLOCKED_DESTS: ${GATEWAY_BLOCKED_DESTS:-}
     healthcheck:
-      test: ["CMD", "sh", "-c", "test -r /gateway-ca/mitmproxy-ca-cert.pem && iptables -t nat -S PREROUTING | grep -q 'dport 443'"]
+      test: ["CMD", "sh", "-c", "test -r /gateway-ca/mitmproxy-ca-cert.pem && iptables -t nat -S PREROUTING | grep -q 'dport 443' && pgrep -x dnsmasq >/dev/null"]
       interval: 3s
       timeout: 3s
       retries: 40
@@ -91,6 +96,30 @@ services:
       wpnet:
         condition: service_started
 
+  netcap:
+    build: ./netcap
+    # Capture from inside the sandbox namespace: this is the only vantage point that
+    # sees sandbox->db and sandbox->host unicast. Separate PID and mount namespaces,
+    # so the sample cannot see, signal, or reach these captures or their output.
+    network_mode: "service:wpnet"
+    init: true
+    restart: unless-stopped
+    cap_drop: [ALL]
+    cap_add: [NET_RAW, NET_ADMIN]
+    read_only: true
+    security_opt: [no-new-privileges:true]
+    volumes:
+      - ./artifacts:/artifacts
+    healthcheck:
+      test: ["CMD", "sh", "-c", "test \"$$(pgrep -xc tcpdump)\" = 3"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    depends_on:
+      wpnet:
+        condition: service_started
+
   wordpress:
     build: ./wordpress
     network_mode: "service:wpnet"
@@ -102,11 +131,21 @@ services:
     mem_limit: 1g
     cpus: 2
     tmpfs:
+      # 1777, not the default 1755: the container runs as uid 33 and the entrypoint has to
+      # create /run/php, /run/nginx and /run/supervisor under a tmpfs root Docker owns as root.
       - /tmp:size=256m,mode=1777
       - /run:size=16m,mode=1777
     volumes:
       - wp_html:/var/www/html
-      - gateway_ca:/gateway-ca:ro
+      # Only the CA certificate, not the whole confdir: mitmproxy also keeps its CA
+      # *private key* in this volume, and the sample runs code in this container.
+      # (Compose long-syntax `subpath`; verified working on Docker 29.4 / Compose 5.1.)
+      - type: volume
+        source: gateway_ca
+        target: /gateway-ca/mitmproxy-ca-cert.pem
+        read_only: true
+        volume:
+          subpath: mitmproxy-ca-cert.pem
       - ./samples/plugins:/samples/plugins:ro
       - ./samples/themes:/samples/themes:ro
       - ./samples/webroot:/samples/webroot:ro
@@ -132,6 +171,8 @@ services:
         condition: service_healthy
       netguard:
         condition: service_completed_successfully
+      netcap:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-sf", "-o", "/dev/null", "http://127.0.0.1:8080/healthz"]
       interval: 5s
