@@ -886,6 +886,7 @@ def parse(text):
 """Minimal stdlib HTTP client with a cookie jar, for triggering the sandbox
 over http://127.0.0.1:8088. No third-party deps."""
 import urllib.request
+import urllib.error
 import urllib.parse
 import http.cookiejar
 
@@ -901,7 +902,8 @@ class WpSession:
     def _req(self, path, data=None):
         url = self.base + path
         body = data.encode() if data is not None else None
-        r = urllib.request.Request(url, data=body, method="POST" if data is not None else "GET")
+        headers = {"Content-Type": "application/x-www-form-urlencoded"} if data is not None else {}
+        r = urllib.request.Request(url, data=body, headers=headers, method="POST" if data is not None else "GET")
         try:
             with self.opener.open(r, timeout=60) as resp:
                 return resp.getcode()
