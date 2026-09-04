@@ -6,6 +6,20 @@ set -euo pipefail
 mkdir -p /run/php /run/nginx /run/supervisor /tmp/nginx /tmp/wp-cli-cache
 export XDEBUG_MODE=off   # only for the CLI work below; php-fpm gets its own env via supervisord
 
+# 0. The artifact directories are host bind mounts. On Docker Desktop and OrbStack the
+# host's ownership is remapped and uid 33 can write them; on a native Linux host they
+# arrive owned by the invoking user and PHP's writes fail silently -- traces, dumps and
+# the error log would simply never appear and the sandbox would look like it worked.
+for d in /var/log/sandbox/xdebug /var/log/sandbox/sp-dumps /var/log/sandbox/php; do
+  probe="$d/.write-probe.$$"
+  if ! ( : > "$probe" ) 2>/dev/null; then
+    echo "FATAL: $d is not writable by uid $(id -u). PHP artifacts would be lost silently." >&2
+    echo "       On a native Linux Docker host, run: chown -R 33:33 artifacts/" >&2
+    exit 1
+  fi
+  rm -f "$probe"
+done
+
 # 1. The mitmproxy CA must exist, or TLS interception silently breaks.
 for _ in $(seq 1 60); do
   [ -r /gateway-ca/mitmproxy-ca-cert.pem ] && break
@@ -66,10 +80,41 @@ for d in /samples/themes/*/; do
   [ -d "$d" ] && ln -sfn "${d%/}" "/var/www/html/wp-content/themes/$(basename "$d")"
 done
 for f in /samples/webroot/*; do
-  [ -e "$f" ] && [ "$(basename "$f")" != ".gitkeep" ] && ln -sfn "$f" "/var/www/html/$(basename "$f")"
+  [ -e "$f" ] || continue
+  b="$(basename "$f")"
+  case "$b" in .*) continue ;; esac
+  # Never let a sample take over WordPress's own entry points, and never replace a real
+  # file in the docroot: `ln -sfn` would silently delete it, and the analyst would be
+  # looking at a site whose core files are not the ones they think they are.
+  case "$b" in
+    index.php|wp-config.php)
+      echo "entrypoint: WARNING refusing to link /samples/webroot/$b (reserved WordPress entry point)" >&2
+      continue ;;
+  esac
+  if [ -e "/var/www/html/$b" ] && [ ! -L "/var/www/html/$b" ]; then
+    echo "entrypoint: WARNING refusing to link /samples/webroot/$b (a real file of that name already exists in the docroot)" >&2
+    continue
+  fi
+  ln -sfn "$f" "/var/www/html/$b"
 done
 echo "entrypoint: linked samples:"; ls -l /var/www/html/wp-content/plugins /var/www/html/wp-content/themes | grep -- '-> /samples' || true
 
-# 7. Hand off. php-fpm must trace, so clear the CLI-only override.
+# 7. Containment gate. netguard runs in wpnet's namespace as a one-shot; if wpnet is
+# recreated without it (or netguard is skipped), this namespace keeps Docker's own
+# default route straight out to the bridge and the sample would run unproxied and
+# unfiltered. Refuse to start rather than detonate unguarded. /proc/net/route stores
+# addresses little-endian, so 172.30.0.2 (AC 1E 00 02) reads as 02001EAC.
+expected_gw="02001EAC"
+defaults="$(awk 'NR > 1 && $2 == "00000000" { print toupper($3) }' /proc/net/route)"
+n_defaults="$(printf '%s' "$defaults" | grep -c . || true)"
+if [ "$n_defaults" != 1 ] || [ "$defaults" != "$expected_gw" ]; then
+  echo "FATAL: netns is not guarded: expected exactly one default route via 172.30.0.2," >&2
+  echo "       found $n_defaults default route(s) [$defaults]. Did netguard run?" >&2
+  echo "       Recreate the whole namespace: make up  (or docker compose up -d --force-recreate wpnet netguard netcap wordpress)" >&2
+  exit 1
+fi
+echo "entrypoint: default route verified via 172.30.0.2"
+
+# 8. Hand off. php-fpm must trace, so clear the CLI-only override.
 unset XDEBUG_MODE
 exec /usr/bin/supervisord -c /etc/supervisor/supervisord.conf
