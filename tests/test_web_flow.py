@@ -56,5 +56,5 @@ def test_full_flow(tmp_path):
     assert rep["summary"]["db_diff"]["users_added"][0]["login"] == "sys_maint"
     # method guard
     c = _conn(port); c.request("PUT", "/run", headers={"Host": "127.0.0.1:%d" % port})
-    assert c.getresponse().status in (404, 405, 501)
+    assert c.getresponse().status == 405
     httpd.shutdown()

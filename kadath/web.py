@@ -56,6 +56,10 @@ class JobManager:
             job.error = f"failed to start engine: {e}"
             job.state = "error"
             return
+        # The engine streams phase messages to stderr throughout and prints exactly
+        # one line to stdout (the summary.json path) at the very end. So draining
+        # stderr first, then reading stdout, cannot deadlock. If the engine ever
+        # writes bulk stdout before exit, switch to a select/thread-per-pipe reader.
         for line in p.stderr:
             job.phase_lines.append(line.rstrip("\n"))
         out = p.stdout.read().strip()
@@ -201,9 +205,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if not job or job.state != "done":
             self._json(404, {"error": "no report"})
             return
-        summary = json.load(open(os.path.join(job.report_dir, "summary.json")))
+        try:
+            with open(os.path.join(job.report_dir, "summary.json")) as f:
+                summary = json.load(f)
+        except (OSError, ValueError):
+            self._json(500, {"error": "report unreadable"})
+            return
+        iocs = {}
         iocs_path = os.path.join(job.report_dir, "iocs.json")
-        iocs = json.load(open(iocs_path)) if os.path.exists(iocs_path) else {}
+        if os.path.exists(iocs_path):
+            try:
+                with open(iocs_path) as f:
+                    iocs = json.load(f)
+            except (OSError, ValueError):
+                iocs = {}
         self._json(200, {"summary": summary, "iocs": iocs,
                          "verdict": web_verdict.compute(summary),
                          "report_dir": job.report_dir})
@@ -214,7 +229,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._headers(404, "text/plain; charset=utf-8")
             self.wfile.write(b"no report")
             return
-        summary = json.load(open(os.path.join(job.report_dir, "summary.json")))
+        try:
+            with open(os.path.join(job.report_dir, "summary.json")) as f:
+                summary = json.load(f)
+        except (OSError, ValueError):
+            self._headers(500, "text/plain; charset=utf-8")
+            self.wfile.write(b"report unreadable")
+            return
         allow = web_util.artifact_allowlist(summary, job.report_dir)
         safe = web_util.safe_artifact_path(REPO_ROOT, allow, posixpath.basename(name))
         if not safe or not os.path.isfile(safe):
@@ -223,9 +244,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         with open(safe, "rb") as f:
             data = f.read()
+        dl_name = web_util.sanitize_filename(posixpath.basename(safe))
         self._headers(200, "text/plain; charset=utf-8",
-                      {"Content-Disposition": f'attachment; filename="{posixpath.basename(safe)}"'})
+                      {"Content-Disposition": f'attachment; filename="{dl_name}"'})
         self.wfile.write(data)
+
+    def _method_not_allowed(self):
+        self._headers(405, "text/plain; charset=utf-8", {"Allow": "GET, POST"})
+        self.wfile.write(b"method not allowed")
+
+    do_HEAD = do_PUT = do_DELETE = do_OPTIONS = do_PATCH = lambda self: self._method_not_allowed()
 
     def log_message(self, *a):
         pass  # quiet
