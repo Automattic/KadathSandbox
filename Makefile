@@ -1,4 +1,4 @@
-.PHONY: up down reset selftest snapshot logs trace shell build detonate
+.PHONY: up down reset selftest snapshot logs trace shell build detonate web
 
 up:
 	docker compose up -d --build --wait db gateway wpnet netcap wordpress
@@ -48,3 +48,7 @@ detonate:
 	python3 bin/kadath detonate "$(SAMPLE)" \
 	  $(if $(RECIPE),--recipe "$(RECIPE)") \
 	  $(if $(RESET),--reset)
+
+# Start the localhost web UI at http://127.0.0.1:8090
+web:
+	python3 bin/kadath web $(if $(PORT),--port $(PORT))

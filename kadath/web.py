@@ -67,3 +67,173 @@ class JobManager:
         else:
             job.error = "\n".join(job.phase_lines[-10:]) or f"engine exited {rc}"
             job.state = "error"
+
+
+import html
+import json
+import http.server
+import posixpath
+from urllib.parse import urlparse
+
+from kadath import web_util, web_verdict
+
+_ASSETS = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT = os.path.dirname(_ASSETS)
+MAX_BODY = 25 * 1024 * 1024
+CSP = ("default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+       "img-src 'self'; base-uri 'none'; form-action 'self'")
+
+
+def _read_asset(name):
+    with open(os.path.join(_ASSETS, name), "rb") as f:
+        return f.read()
+
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    # set by serve(): self.server.manager, self.server.port, self.server.csrf, self.server.workdir
+    server_version = "kadath-web"
+
+    def _headers(self, code, ctype, extra=None):
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Security-Policy", CSP)
+        self.send_header("X-Content-Type-Options", "nosniff")
+        for k, v in (extra or {}).items():
+            self.send_header(k, v)
+        self.end_headers()
+
+    def _json(self, code, obj):
+        body = json.dumps(obj).encode()
+        self._headers(code, "application/json; charset=utf-8")
+        self.wfile.write(body)
+
+    def _guard_host(self):
+        if not web_util.host_allowed(self.headers.get("Host", ""), self.server.port):
+            self._headers(421, "text/plain; charset=utf-8")
+            self.wfile.write(b"bad host")
+            return False
+        return True
+
+    def do_GET(self):
+        if not self._guard_host():
+            return
+        path = urlparse(self.path).path
+        if path == "/":
+            body = _read_asset("web_index.html").replace(b"__CSRF__", self.server.csrf.encode())
+            self._headers(200, "text/html; charset=utf-8")
+            self.wfile.write(body)
+        elif path == "/app.js":
+            self._headers(200, "application/javascript; charset=utf-8")
+            self.wfile.write(_read_asset("web_app.js"))
+        elif path == "/app.css":
+            self._headers(200, "text/css; charset=utf-8")
+            self.wfile.write(_read_asset("web_app.css"))
+        elif path.startswith("/status/"):
+            self._status(path.rsplit("/", 1)[-1])
+        elif path.startswith("/report/"):
+            self._report(path.rsplit("/", 1)[-1])
+        elif path.startswith("/artifact/"):
+            parts = path.split("/", 3)
+            self._artifact(parts[2] if len(parts) > 2 else "", parts[3] if len(parts) > 3 else "")
+        else:
+            self._headers(404, "text/plain; charset=utf-8")
+            self.wfile.write(b"not found")
+
+    def do_POST(self):
+        if not self._guard_host():
+            return
+        if urlparse(self.path).path != "/run":
+            self._headers(404, "text/plain; charset=utf-8")
+            self.wfile.write(b"not found")
+            return
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        if length > MAX_BODY:
+            self._headers(413, "text/plain; charset=utf-8")
+            self.wfile.write(b"upload too large")
+            return
+        ctype = self.headers.get("Content-Type", "")
+        body = self.rfile.read(length)
+        fields, files = web_util.parse_multipart(ctype, body)
+        if fields.get("csrf") != self.server.csrf:
+            self._headers(403, "text/plain; charset=utf-8")
+            self.wfile.write(b"bad csrf token")
+            return
+        if "sample" not in files:
+            self._json(400, {"error": "no sample uploaded"})
+            return
+        job_dir = os.path.join(self.server.workdir, ".kadath", "web", secrets.token_urlsafe(6))
+        os.makedirs(job_dir, exist_ok=True)
+        sample_name = web_util.sanitize_filename(files["sample"][0])
+        sample_path = os.path.join(job_dir, sample_name)
+        with open(sample_path, "wb") as f:
+            f.write(files["sample"][1])
+        recipe_path = None
+        if "recipe" in files and files["recipe"][0]:
+            recipe_path = os.path.join(job_dir, "recipe.kadath")
+            with open(recipe_path, "wb") as f:
+                f.write(files["recipe"][1])
+        reset = fields.get("reset") in ("on", "true", "1")
+        try:
+            job = self.server.manager.start(sample_path, recipe_path, reset)
+        except Busy as e:
+            self._json(409, {"error": str(e)})
+            return
+        self._json(200, {"job_id": job.id})
+
+    def _status(self, job_id):
+        job = self.server.manager.get(job_id)
+        if not job:
+            self._json(404, {"error": "unknown job"})
+            return
+        self._json(200, {"state": job.state, "phase_lines": job.phase_lines,
+                         "report_dir": job.report_dir, "error": job.error})
+
+    def _report(self, job_id):
+        job = self.server.manager.get(job_id)
+        if not job or job.state != "done":
+            self._json(404, {"error": "no report"})
+            return
+        summary = json.load(open(os.path.join(job.report_dir, "summary.json")))
+        iocs_path = os.path.join(job.report_dir, "iocs.json")
+        iocs = json.load(open(iocs_path)) if os.path.exists(iocs_path) else {}
+        self._json(200, {"summary": summary, "iocs": iocs,
+                         "verdict": web_verdict.compute(summary),
+                         "report_dir": job.report_dir})
+
+    def _artifact(self, job_id, name):
+        job = self.server.manager.get(job_id)
+        if not job or job.state != "done":
+            self._headers(404, "text/plain; charset=utf-8")
+            self.wfile.write(b"no report")
+            return
+        summary = json.load(open(os.path.join(job.report_dir, "summary.json")))
+        allow = web_util.artifact_allowlist(summary, job.report_dir)
+        safe = web_util.safe_artifact_path(REPO_ROOT, allow, posixpath.basename(name))
+        if not safe or not os.path.isfile(safe):
+            self._headers(403, "text/plain; charset=utf-8")
+            self.wfile.write(b"forbidden")
+            return
+        with open(safe, "rb") as f:
+            data = f.read()
+        self._headers(200, "text/plain; charset=utf-8",
+                      {"Content-Disposition": f'attachment; filename="{posixpath.basename(safe)}"'})
+        self.wfile.write(data)
+
+    def log_message(self, *a):
+        pass  # quiet
+
+
+def serve(port=8090, engine_cmd=None, workdir=None):
+    workdir = workdir or REPO_ROOT
+    if engine_cmd is None:
+        engine_cmd = [os.path.join(REPO_ROOT, "bin", "kadath"), "detonate"]
+    httpd = http.server.ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    httpd.manager = JobManager(engine_cmd, workdir)
+    httpd.port = port
+    httpd.csrf = secrets.token_urlsafe(16)
+    httpd.workdir = workdir
+    print(f"kadath web on http://127.0.0.1:{port}  (Ctrl-C to stop)")
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        httpd.shutdown()
