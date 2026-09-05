@@ -48,9 +48,10 @@ def artifact_allowlist(summary, report_dir):
 def safe_artifact_path(repo_root, allowlist, basename):
     root = os.path.realpath(repo_root)
     for p in allowlist:
-        if os.path.basename(p) == basename:
-            rp = os.path.realpath(p)
-            if rp == root or rp.startswith(root + os.sep):
-                return rp
-            return None
+        if os.path.basename(p) != basename:
+            continue
+        rp = os.path.realpath(p)
+        if rp == root or rp.startswith(root + os.sep):
+            return rp
+        # basename matched but escapes repo_root: keep scanning for a valid one
     return None
