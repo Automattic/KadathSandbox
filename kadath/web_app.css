@@ -1,14 +1,38 @@
-body { font: 14px/1.5 system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
+:root {
+  color-scheme: light dark;
+  --bg: #ffffff; --fg: #1c1e22; --muted: #666a70;
+  --panel: #f4f4f6; --panel-fg: #ddd; --panel-bg: #111318;
+  --border: #ccced3;
+  --red-fg: #a30000; --red-bg: #fce4e4; --red-line: #d99;
+  --amber-fg: #8a5a00; --amber-bg: #fff4e0; --amber-line: #d9b060;
+  --green-fg: #1a6b1a; --green-bg: #e6f5e6; --green-line: #9c9;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14171d; --fg: #eef0f3; --muted: #8b929c;
+    --panel: #1b1f27; --panel-fg: #d7dbe1; --panel-bg: #0c0e12;
+    --border: #2b313b;
+    --red-fg: #ef7d79; --red-bg: #2a1615; --red-line: #6d2a27;
+    --amber-fg: #e6a94b; --amber-bg: #271d0e; --amber-line: #614516;
+    --green-fg: #6fc07d; --green-bg: #12220f; --green-line: #2c4a2b;
+  }
+}
+body { font: 14px/1.5 system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem;
+  background: var(--bg); color: var(--fg); }
+h1, h2, h3 { color: var(--fg); }
 label { display: block; margin: .6rem 0; }
-#log { background: #111; color: #ddd; padding: 1rem; height: 16rem; overflow: auto; white-space: pre-wrap; }
-.verdict { padding: 1rem; border-radius: 6px; font-weight: 600; margin: 1rem 0; }
-.verdict.red { background: #fce4e4; color: #a30000; border: 1px solid #a30000; }
-.verdict.amber { background: #fff4e0; color: #8a5a00; border: 1px solid #8a5a00; }
-.verdict.green { background: #e6f5e6; color: #1a6b1a; border: 1px solid #1a6b1a; }
+#log { background: var(--panel-bg); color: var(--panel-fg); padding: 1rem; height: 16rem; overflow: auto; white-space: pre-wrap; border: 1px solid var(--border); border-radius: 6px; }
+.verdict { padding: 1rem; border-radius: 6px; font-weight: 600; margin: 1rem 0; border: 1px solid; }
+.verdict.red { background: var(--red-bg); color: var(--red-fg); border-color: var(--red-line); }
+.verdict.amber { background: var(--amber-bg); color: var(--amber-fg); border-color: var(--amber-line); }
+.verdict.green { background: var(--green-bg); color: var(--green-fg); border-color: var(--green-line); }
 table { border-collapse: collapse; width: 100%; margin: .5rem 0 1.5rem; }
-th, td { border: 1px solid #ccc; padding: .3rem .5rem; text-align: left; font-size: 13px; }
+th, td { border: 1px solid var(--border); padding: .3rem .5rem; text-align: left; font-size: 13px; }
 tr.wpcore { opacity: .5; }
-td.admin { color: #a30000; font-weight: 600; }
+td.admin { color: var(--red-fg); font-weight: 600; }
 h3 { margin: 1.2rem 0 .3rem; }
-.note { color: #666; }
+.note { color: var(--muted); }
+a { color: inherit; }
 a.dl { margin-right: 1rem; }
+button, input[type="file"] { font: inherit; }
+:focus-visible { outline: 2px solid var(--amber-fg); outline-offset: 2px; }
