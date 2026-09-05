@@ -93,6 +93,23 @@ Only one detonation runs at a time. The command never edits the containment
 configuration; to reach a private lab target use the `GATEWAY_BLOCKED_DESTS`
 override described above.
 
+## Web UI
+
+For a browser front end instead of the CLI:
+
+    make web        # serves http://127.0.0.1:8090
+
+Open it, choose a sample (and optionally a `.kadath` recipe), tick "reset" for a
+clean slate if you like, and click Detonate. The page streams the run's live
+progress, then shows a verdict banner (red / amber / green) and the report — DB
+changes, call chain, network, IOCs, and downloadable artifacts.
+
+It runs the same `bin/kadath detonate` engine, one detonation at a time. It binds
+`127.0.0.1` only and guards against other pages in your browser (Host allowlist +
+CSRF token); keep the port local — do not expose it to a network. Downloaded
+artifacts are hostile content served as inert attachments; do not open a
+downloaded trace or flow in a browser tab.
+
 ## Loading a sample
 
 **Drop-in (webshells, loose PHP, unpacked plugins/themes):**
