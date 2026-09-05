@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Fake detonate engine for web flow tests. Args: <sample> --json [--recipe P] [--reset]
+# Fake offer engine for web flow tests. Args: <sample> --json [--recipe P] [--reset]
 # Prints phase lines to stderr, writes a canned report, prints the summary path.
 set -e
 echo "bringing the stack up..." >&2

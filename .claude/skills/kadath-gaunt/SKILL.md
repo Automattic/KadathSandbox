@@ -1,5 +1,5 @@
 ---
-name: kadath-syscalls
+name: kadath-gaunt
 description: Use when you need OS-level evidence — syscalls, spawned processes with argv, file opens, raw connect() calls — from a WordPress sample running in KadathSandbox at /Users/fioa8c/WORK/KadathSandbox, rather than PHP-level Xdebug traces. Covers attaching strace and bpftrace to php-fpm via the tracer sidecar during a trigger.
 user-invocable: true
 ---
@@ -16,7 +16,7 @@ The tracer is a privileged container sharing php-fpm's PID namespace, behind a C
 
 Tracing must be running *before* the trigger, so it is a two-actor dance: start the tracer, then in a second shell fire the HTTP request.
 
-1. Stage the sample and confirm the stack is healthy (see kadath-detonate; `make selftest` must have passed).
+1. Stage the sample and confirm the stack is healthy (see kadath-offer; `make selftest` must have passed).
 2. Start the tracer in the background, writing to `artifacts/strace/` (a bind mount you can read from the host afterwards), or run it foreground in one terminal.
 3. Trigger with `curl http://127.0.0.1:8088/...` from another shell.
 4. Stop the tracer, read the output from `artifacts/strace/`.
@@ -51,7 +51,7 @@ docker compose --profile trace run --rm tracer bpftrace /opt/tracer/phpfpm.bt | 
 
 ## Correlating with the PHP layer
 
-The OS trace tells you *that* a shell ran or a socket opened; the Xdebug trace tells you *which PHP call* did it and with what surrounding logic. Match them by wall-clock time (strace `-tt` timestamps vs the trace's `TRACE START` and per-record time index) and hand both to **kadath-analyze**. A `connect()` in strace with no corresponding decrypted flow in `flows.mitm` usually means the destination was blocked by the gateway or netguard — expected, and itself an indicator.
+The OS trace tells you *that* a shell ran or a socket opened; the Xdebug trace tells you *which PHP call* did it and with what surrounding logic. Match them by wall-clock time (strace `-tt` timestamps vs the trace's `TRACE START` and per-record time index) and hand both to **kadath-scry**. A `connect()` in strace with no corresponding decrypted flow in `flows.mitm` usually means the destination was blocked by the gateway or netguard — expected, and itself an indicator.
 
 ## On a native Linux host (no sidecar)
 

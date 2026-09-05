@@ -1,4 +1,4 @@
-.PHONY: up down reset selftest snapshot logs trace shell build detonate web
+.PHONY: up down reset selftest snapshot logs trace shell build offer web
 
 up:
 	docker compose up -d --build --wait db gateway wpnet netcap wordpress
@@ -17,9 +17,9 @@ build:
 selftest:
 	bash tests/selftest.sh
 
-# End-of-detonation step. The sample runs as uid 33 and the artifact dirs are bind
+# End-of-offering step. The sample runs as uid 33 and the artifact dirs are bind
 # mounts owned by the same uid, so a sample that wants to cover its tracks can delete
-# what has already been written. Snapshotting off the live tree after every detonation
+# what has already been written. Snapshotting off the live tree after every offering
 # is what makes that a nuisance instead of a loss.
 snapshot:
 	@ts=$$(date +%Y%m%d-%H%M%S); dir=snapshots/$$ts; \
@@ -41,11 +41,11 @@ trace:
 shell:
 	docker compose exec wordpress bash
 
-# Detonate a sample end to end. SAMPLE is required; RECIPE and RESET optional.
-#   make detonate SAMPLE=path/to/sample.php
-detonate:
-	@test -n "$(SAMPLE)" || { echo "usage: make detonate SAMPLE=<path> [RECIPE=<path>] [RESET=1]"; exit 2; }
-	python3 bin/kadath detonate "$(SAMPLE)" \
+# Offer a sample end to end. SAMPLE is required; RECIPE and RESET optional.
+#   make offer SAMPLE=path/to/sample.php
+offer:
+	@test -n "$(SAMPLE)" || { echo "usage: make offer SAMPLE=<path> [RECIPE=<path>] [RESET=1]"; exit 2; }
+	python3 bin/kadath offer "$(SAMPLE)" \
 	  $(if $(RECIPE),--recipe "$(RECIPE)") \
 	  $(if $(RESET),--reset)
 

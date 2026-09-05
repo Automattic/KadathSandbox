@@ -1,12 +1,14 @@
 # KadathSandbox
 
-An isolated WordPress sandbox for detonating untrusted PHP: plugins, themes, webshells, droppers.
+An isolated WordPress sandbox for offering untrusted PHP: plugins, themes, webshells, droppers.
 Nothing the sample does can leave except through a decrypting proxy, and it cannot switch the
 recording off: the packet capture, the proxy and the DNS log run in containers it has no access
 to, and the in-process off switches (`xdebug_stop_trace`, `ini_set('error_log', ...)`) are
 disabled. It *can* delete artifact files that have already been written — the observation layer
 needs those directories writable by the same uid the sample runs as — so run `make snapshot`
-after every detonation. See [Caveats](#caveats).
+after every offering. See [Caveats](#caveats).
+
+The tool speaks in the vocabulary of Lovecraft's *Dream-Quest of Unknown Kadath* — the Offering, the Wards, the Gaunts, the Omens, the Scrying. [LORE.md](LORE.md) is the dictionary between that and plain security terms.
 
 ## What you get
 
@@ -58,28 +60,28 @@ Then:
 This repo ships four skills under `.claude/skills/` (also packaged as the `kadath-sandbox`
 plugin) so an agent can run the whole workflow:
 
-- **kadath-detonate** — stage a sample, trigger it through the traced path, mark the run.
-- **kadath-analyze** — read one run's artifacts into a report, `iocs.json`, and a draft YARA rule.
-- **kadath-syscalls** — attach strace/bpftrace to php-fpm for OS-level evidence.
-- **kadath-ops** — start, reset, snapshot, self-test, and troubleshoot without weakening containment.
+- **kadath-offer** — stage a sample, trigger it through the traced path, mark the run.
+- **kadath-scry** — read one run's artifacts into a report, `iocs.json`, and a draft YARA rule.
+- **kadath-gaunt** — attach strace/bpftrace to php-fpm for OS-level evidence.
+- **kadath-ward** — start, reset, snapshot, self-test, and troubleshoot without weakening containment.
 
 Open this directory in Claude Code and the skills are discovered automatically (a fresh session
 picks up newly added skills). Elsewhere, install with `/plugin marketplace add Automattic/KadathSandbox`
-then `/plugin install kadath-sandbox@kadath`. A detonation writes its report to `reports/<slug>-<ts>/`.
+then `/plugin install kadath-sandbox@kadath`. A offering writes its report to `reports/<slug>-<ts>/`.
 
-## One-command detonation
+## One-command offering
 
 For a scripted run without an agent:
 
-    make detonate SAMPLE=path/to/sample.php
+    make offer SAMPLE=path/to/sample.php
     # or, with options:
-    python3 bin/kadath detonate path/to/sample.php [--recipe r.kadath] [--reset] [--json]
+    python3 bin/kadath offer path/to/sample.php [--recipe r.kadath] [--reset] [--json]
 
 It brings the stack up, runs the self-test gate once per build, isolates any
 prior sample, stages and triggers this one by type, snapshots, and writes
 `reports/<slug>-<ts>/` with `run.env`, `summary.json` (DB diff, call chain,
 network summary, artifact list), and a pre-filled `iocs.json`. The narrative
-report and YARA rule are still the `kadath-analyze` skill's job, working from
+report and YARA rule are still the `kadath-scry` skill's job, working from
 that structured input.
 
 For a sample the defaults can't drive (a webshell needing specific parameters,
@@ -89,7 +91,7 @@ or an admin action), drop a `<sample>.kadath` recipe next to it:
     GET  /shell.php?c=id
     POST /wp-admin/admin-ajax.php  action=foo&x=1
 
-Only one detonation runs at a time. The command never edits the containment
+Only one offering runs at a time. The command never edits the containment
 configuration; to reach a private lab target use the `GATEWAY_BLOCKED_DESTS`
 override described above.
 
@@ -100,11 +102,11 @@ For a browser front end instead of the CLI:
     make web        # serves http://127.0.0.1:8090
 
 Open it, choose a sample (and optionally a `.kadath` recipe), tick "reset" for a
-clean slate if you like, and click Detonate. The page streams the run's live
+clean slate if you like, and click Offer. The page streams the run's live
 progress, then shows a verdict banner (red / amber / green) and the report — DB
 changes, call chain, network, IOCs, and downloadable artifacts.
 
-It runs the same `bin/kadath detonate` engine, one detonation at a time. It binds
+It runs the same `bin/kadath offer` engine, one offering at a time. It binds
 `127.0.0.1` only and guards against other pages in your browser (Host allowlist +
 CSRF token); keep the port local — do not expose it to a network. Downloaded
 artifacts are hostile content served as inert attachments; do not open a
@@ -147,7 +149,7 @@ behaviour traced.
   in `php-error.log`, and `docker compose run --rm --no-deps --entrypoint sh netguard -c 'iptables
   -nvL OUTPUT'` gives per-rule drop counters.
 - `make logs` tails gateway and wordpress.
-- `make snapshot` — **do this at the end of every detonation.** It copies `artifacts/` and the
+- `make snapshot` — **do this at the end of every offering.** It copies `artifacts/` and the
   `wordpress`/`gateway` container logs into `snapshots/<timestamp>/`. The sample runs as uid 33
   and the artifact directories have to be writable by uid 33 for PHP to write into them at all,
   so a sample that wants to cover its tracks can `unlink()` traces it has already produced.
@@ -191,7 +193,7 @@ recreated, recreate them too, or just run `make up`, which handles ordering. Rec
 
 You do not have to remember this: the `wordpress` entrypoint checks, before it starts anything,
 that the namespace has exactly one default route and that it points at the gateway. If `netguard`
-did not re-run, the container exits with a message instead of detonating the sample unguarded.
+did not re-run, the container exits with a message instead of offering the sample unguarded.
 
 WordPress makes loopback requests to its own site URL (`http://127.0.0.1:8088`) from inside the
 container — wp-cron above all. nginx listens on both 8080 and 8088 so these succeed and scheduled
@@ -199,7 +201,7 @@ tasks actually fire; you will see them in traces and in `artifacts/php/nginx-acc
 
 ## Artifact growth, snapshots and reset
 
-Three artifacts grow without bound during a long detonation and are worth watching:
+Three artifacts grow without bound during a long offering and are worth watching:
 
 - `artifacts/pcap/` — capped by rotation at 20 slices of 100 MB (2 GB) per `netcap` start; the
   oldest slice is overwritten, so a very chatty sample eventually loses its earliest packets.
@@ -236,4 +238,4 @@ project's own volumes and the contents of `artifacts/`; nothing outside the sand
 - No IPv6 rules exist on the gateway: IPv6 is disabled in the WordPress namespace and the Compose networks have no IPv6 subnets. If you enable IPv6 on these networks, the containment must be revisited.
 - Treat `artifacts/` as hostile: decrypted flows and dumps can contain second-stage payloads. Read them with `cat -v` / `grep -a ... | cat -v` rather than letting raw sample bytes hit your terminal.
 - **Use a throwaway browser profile** for http://127.0.0.1:8088 and http://127.0.0.1:8081. You are pointing a browser at attacker-controlled HTML with a real session; a profile holding your normal cookies, extensions and saved passwords is exposed to whatever the sample serves, and mitmweb renders sample-controlled request and response bodies too.
-- **The sample can delete artifacts that were already written.** It runs as uid 33 and the artifact directories must be writable by uid 33 for the observation layer to work at all, so anti-forensic `unlink()` is available to it. It cannot stop the recording — `netcap`, mitmproxy and dnsmasq write from containers it has no access to, and the PHP-side off switches are disabled — but it can destroy what is on disk. `make snapshot` after each detonation is the mitigation.
+- **The sample can delete artifacts that were already written.** It runs as uid 33 and the artifact directories must be writable by uid 33 for the observation layer to work at all, so anti-forensic `unlink()` is available to it. It cannot stop the recording — `netcap`, mitmproxy and dnsmasq write from containers it has no access to, and the PHP-side off switches are disabled — but it can destroy what is on disk. `make snapshot` after each offering is the mitigation.

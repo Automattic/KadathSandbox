@@ -1,6 +1,6 @@
 """KadathSandbox web front end. This module holds the background job model and
 (Task 4) the HTTP server. Standard library only; the server shells out only to
-the detonate engine."""
+the offer engine."""
 import os
 import secrets
 import subprocess
@@ -35,7 +35,7 @@ class JobManager:
     def start(self, sample_path, recipe_path=None, reset=False):
         with self._lock:
             if self.current is not None and self.current.state == "running":
-                raise Busy("another detonation is in progress")
+                raise Busy("another offering is in progress")
             job = Job(secrets.token_urlsafe(8))
             self.current = job
             self._jobs[job.id] = job
@@ -262,7 +262,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 def serve(port=8090, engine_cmd=None, workdir=None):
     workdir = workdir or REPO_ROOT
     if engine_cmd is None:
-        engine_cmd = [os.path.join(REPO_ROOT, "bin", "kadath"), "detonate"]
+        engine_cmd = [os.path.join(REPO_ROOT, "bin", "kadath"), "offer"]
     httpd = http.server.ThreadingHTTPServer(("127.0.0.1", port), Handler)
     httpd.manager = JobManager(engine_cmd, workdir)
     httpd.port = port

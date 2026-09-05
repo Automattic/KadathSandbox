@@ -1,4 +1,4 @@
-"""Orchestrate one detonation: preflight, lock, isolate, stage, mark, trigger,
+"""Orchestrate one offering: preflight, lock, isolate, stage, mark, trigger,
 collect, emit. Shells out for all Docker/Make/wp work; touches no containment
 config."""
 import argparse
@@ -150,8 +150,8 @@ def _apply_slug(det, slug):
     return detect.Detected(det.type, slug, new_dest)
 
 
-def detonate(argv):
-    ap = argparse.ArgumentParser(prog="kadath detonate")
+def offer(argv):
+    ap = argparse.ArgumentParser(prog="kadath offer")
     ap.add_argument("sample")
     ap.add_argument("--recipe")
     ap.add_argument("--reset", action="store_true")
@@ -195,11 +195,11 @@ def detonate(argv):
 
     # lock
     os.makedirs(os.path.join(ROOT, ".kadath"), exist_ok=True)
-    lock = open(os.path.join(ROOT, ".kadath", "detonate.lock"), "w")
+    lock = open(os.path.join(ROOT, ".kadath", "offer.lock"), "w")
     try:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
-        print("error: another detonation is in progress", file=sys.stderr)
+        print("error: another offering is in progress", file=sys.stderr)
         return 2
 
     try:

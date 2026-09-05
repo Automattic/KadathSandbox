@@ -1,5 +1,5 @@
 ---
-name: kadath-ops
+name: kadath-ward
 description: Use when operating, starting, resetting, snapshotting, self-testing, or troubleshooting the KadathSandbox WordPress malware sandbox at /Users/fioa8c/WORK/KadathSandbox — bringing the stack up, fixing a failing self-test or a container that will not come healthy, and understanding the containment model so you never weaken it to make a sample run.
 user-invocable: true
 ---
@@ -24,7 +24,7 @@ WordPress is `http://127.0.0.1:8088` (admin/sandbox), mitmweb `http://127.0.0.1:
 
 ## The self-test is the gate
 
-`make selftest` is not optional ceremony. It proves, from outside, that tracing writes, TLS is intercepted, DNS is logged, raw egress is dropped and captured, and the WordPress namespace has exactly one route out via the gateway. **A "clean" detonation on a stack whose self-test has not passed proves nothing** — the recording or the containment could be silently broken. If the self-test is red, fix the stack before you trust any result.
+`make selftest` is not optional ceremony. It proves, from outside, that tracing writes, TLS is intercepted, DNS is logged, raw egress is dropped and captured, and the WordPress namespace has exactly one route out via the gateway. **A "clean" offering on a stack whose self-test has not passed proves nothing** — the recording or the containment could be silently broken. If the self-test is red, fix the stack before you trust any result.
 
 ## Containment model — what you must never weaken
 
@@ -53,4 +53,4 @@ The one legitimate way to let a sample reach a private lab target: the documente
 
 ## Between samples
 
-`make snapshot` the finished run, then either `make reset` for a guaranteed clean slate, or keep the stack and rely on the run-marker + `RUN_EPOCH` filtering that kadath-detonate and kadath-analyze use to separate runs. Reset is slower but removes all doubt; the marker approach is fast and is what those skills assume by default.
+`make snapshot` the finished run, then either `make reset` for a guaranteed clean slate, or keep the stack and rely on the run-marker + `RUN_EPOCH` filtering that kadath-offer and kadath-scry use to separate runs. Reset is slower but removes all doubt; the marker approach is fast and is what those skills assume by default.

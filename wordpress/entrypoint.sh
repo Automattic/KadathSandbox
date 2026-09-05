@@ -102,7 +102,7 @@ echo "entrypoint: linked samples:"; ls -l /var/www/html/wp-content/plugins /var/
 # 7. Containment gate. netguard runs in wpnet's namespace as a one-shot; if wpnet is
 # recreated without it (or netguard is skipped), this namespace keeps Docker's own
 # default route straight out to the bridge and the sample would run unproxied and
-# unfiltered. Refuse to start rather than detonate unguarded. /proc/net/route stores
+# unfiltered. Refuse to start rather than offer unguarded. /proc/net/route stores
 # addresses little-endian, so 172.30.0.2 (AC 1E 00 02) reads as 02001EAC.
 expected_gw="02001EAC"
 defaults="$(awk 'NR > 1 && $2 == "00000000" { print toupper($3) }' /proc/net/route)"

@@ -63,7 +63,7 @@ def build_iocs(sample, run_utc, classification, db_diff, files_written,
 
     return {
         "sample": sample,
-        "detonated_utc": run_utc,
+        "offered_utc": run_utc,
         "classification": classification,
         "network": {"observed": _network_observed(network),
                     "domains": domains, "ips": ips, "urls": urls},
@@ -72,7 +72,7 @@ def build_iocs(sample, run_utc, classification, db_diff, files_written,
 
 
 def validate_iocs(iocs):
-    for k in ("sample", "detonated_utc", "classification", "network", "indicators"):
+    for k in ("sample", "offered_utc", "classification", "network", "indicators"):
         assert k in iocs, f"iocs missing required key: {k}"
     assert "observed" in iocs["network"], "iocs.network missing 'observed'"
     for ind in iocs["indicators"]:

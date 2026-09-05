@@ -1,4 +1,4 @@
-"""Compute an at-a-glance verdict from a detonation summary.json. Pure; the web
+"""Compute an at-a-glance verdict from a offering summary.json. Pure; the web
 layer returns this so the client does not decide severity."""
 
 

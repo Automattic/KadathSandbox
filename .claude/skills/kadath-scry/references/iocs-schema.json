@@ -1,9 +1,9 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "KadathSandbox detonation IOCs",
-  "description": "Machine-readable indicators from one detonation. One object per run, written to reports/<slug>-<ts>/iocs.json.",
+  "title": "KadathSandbox offering IOCs",
+  "description": "Machine-readable indicators from one offering. One object per run, written to reports/<slug>-<ts>/iocs.json.",
   "type": "object",
-  "required": ["sample", "detonated_utc", "classification", "network", "indicators"],
+  "required": ["sample", "offered_utc", "classification", "network", "indicators"],
   "properties": {
     "sample": {
       "type": "object",
@@ -16,7 +16,7 @@
         "size_bytes": { "type": "integer" }
       }
     },
-    "detonated_utc": { "type": "string", "description": "ISO-8601, from run.env RUN_UTC" },
+    "offered_utc": { "type": "string", "description": "ISO-8601, from run.env RUN_UTC" },
     "classification": { "type": "string", "description": "e.g. wp-backdoor/create-hide-admin" },
     "family": { "type": "string", "description": "threat-library family label if known" },
     "network": {

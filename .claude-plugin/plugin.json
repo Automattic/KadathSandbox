@@ -1,10 +1,10 @@
 {
   "name": "kadath-sandbox",
-  "description": "Agent skills for driving the KadathSandbox WordPress malware sandbox: detonate a sample, analyse the artifacts into a report with IOCs and a draft YARA rule, trace syscalls, and operate the stack without weakening containment.",
+  "description": "Agent skills for driving the KadathSandbox WordPress malware sandbox: offer a sample, analyse the artifacts into a report with IOCs and a draft YARA rule, trace syscalls, and operate the stack without weakening containment.",
   "version": "0.1.0",
   "author": { "name": "Automattic" },
   "repository": "https://github.com/Automattic/KadathSandbox",
   "license": "GPL-2.0-or-later",
-  "keywords": ["wordpress", "malware", "sandbox", "detonation", "mitmproxy", "xdebug", "snuffleupagus"],
+  "keywords": ["wordpress", "malware", "sandbox", "offering", "mitmproxy", "xdebug", "snuffleupagus"],
   "skills": "./.claude/skills"
 }

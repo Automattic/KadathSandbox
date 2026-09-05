@@ -100,7 +100,7 @@ Keep probes benign (`id`, `echo`, a `phpinfo`) — you are confirming the sink e
 
 ## Dropper
 
-Stage and trigger as a webshell or plugin, then watch the network side: the fetch of the next stage goes through the gateway and is decrypted. After triggering, `kadath-analyze` will find it in `artifacts/mitm/flows.mitm` and `artifacts/dns/dns.log`. If the drop URL is HTTPS the payload body is in the decrypted flow; if it is raw TCP to a non-web port the SYN is in `artifacts/dropped.log` and the connection is blocked.
+Stage and trigger as a webshell or plugin, then watch the network side: the fetch of the next stage goes through the gateway and is decrypted. After triggering, `kadath-scry` will find it in `artifacts/mitm/flows.mitm` and `artifacts/dns/dns.log`. If the drop URL is HTTPS the payload body is in the decrypted flow; if it is raw TCP to a non-web port the SYN is in `artifacts/dropped.log` and the connection is blocked.
 
 ## Zip / archive
 

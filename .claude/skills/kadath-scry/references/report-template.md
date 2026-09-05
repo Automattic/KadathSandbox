@@ -8,7 +8,7 @@ Fill every section. Cite evidence as `file:line` into the sample source and name
 **Sample:** <absolute path>
 **SHA256:** <hash>   **MD5:** <hash>   **Size:** <n> lines / <n> bytes
 **Family / label:** <threat-library family or your classification>
-**Detonated:** <RUN_UTC> in KadathSandbox, activated via <wp-admin over HTTP | CLI + page view | direct URL>
+**Offered:** <RUN_UTC> in KadathSandbox, activated via <wp-admin over HTTP | CLI + page view | direct URL>
 **Artifacts snapshot:** snapshots/<ts>/
 
 ## Summary

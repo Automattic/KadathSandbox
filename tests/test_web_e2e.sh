@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Real end-to-end for the web UI. Needs the stack (make up) and python3.
-# Starts the server on an ephemeral port, detonates tests/probe.php through it,
+# Starts the server on an ephemeral port, offers tests/probe.php through it,
 # polls to done, and checks the report. Skips if Docker is unavailable.
 set -uo pipefail
 cd "$(dirname "$0")/.."

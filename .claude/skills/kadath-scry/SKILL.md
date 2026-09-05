@@ -1,10 +1,10 @@
 ---
-name: kadath-analyze
-description: Use when analysing, triaging, reporting on, or writing up what a WordPress sample did after it was detonated in KadathSandbox at /Users/fioa8c/WORK/KadathSandbox — reading the run's Xdebug traces, Snuffleupagus log, decrypted flows, DNS, drop log, and database changes into a report with IOCs and a draft YARA rule. Follows kadath-detonate.
+name: kadath-scry
+description: Use when analysing, triaging, reporting on, or writing up what a WordPress sample did after it was offered in KadathSandbox at /Users/fioa8c/WORK/KadathSandbox — reading the run's Xdebug traces, Snuffleupagus log, decrypted flows, DNS, drop log, and database changes into a report with IOCs and a draft YARA rule. Follows kadath-offer.
 user-invocable: true
 ---
 
-# Analyse a KadathSandbox detonation
+# Analyse a KadathSandbox offering
 
 Turn one run's artifacts into a report a defender can act on: what the sample did, with per-file per-line evidence, plus a machine-readable IOC list and a draft YARA rule.
 
@@ -12,13 +12,13 @@ Turn one run's artifacts into a report a defender can act on: what the sample di
 
 ## Anchor to the run
 
-You need the run marker from **kadath-detonate**. If you have a `reports/<slug>-<ts>/` directory, read `run.env` from it. If you do not (someone detonated by hand), reconstruct it: pick the epoch just before the trigger, or use the newest trace's mtime as a floor, and write `RUN_EPOCH`, `SLUG`, and the sample hashes into a fresh `reports/<slug>-<ts>/run.env` yourself.
+You need the run marker from **kadath-offer**. If you have a `reports/<slug>-<ts>/` directory, read `run.env` from it. If you do not (someone offered by hand), reconstruct it: pick the epoch just before the trigger, or use the newest trace's mtime as a floor, and write `RUN_EPOCH`, `SLUG`, and the sample hashes into a fresh `reports/<slug>-<ts>/run.env` yourself.
 
 ```bash
 RUN=reports/<slug>-<ts>; set -a; . "$RUN/run.env"; set +a
 ```
 
-**Filter every artifact by `RUN_EPOCH`.** `artifacts/` holds every prior detonation; an unfiltered grep will pull another sample's malware into your report. This is the single most common analysis error.
+**Filter every artifact by `RUN_EPOCH`.** `artifacts/` holds every prior offering; an unfiltered grep will pull another sample's malware into your report. This is the single most common analysis error.
 
 ```bash
 # this run's traces only
@@ -50,7 +50,7 @@ Write all three into `$RUN`:
 
 1. `report.md` — the narrative. Follow [references/report-template.md](references/report-template.md): summary, behaviour with per-line evidence, persistence, network, IOC table, detection notes.
 2. `iocs.json` — machine-readable indicators. Conform to [references/iocs-schema.json](references/iocs-schema.json) exactly, so the threat-library tooling can ingest it.
-3. `draft.yar` — a YARA rule. Mark it a draft from a single detonation in its `meta`; base strings on distinctive constants (hooks, meta/option keys, hex-obfuscated literals, unique user-facing text), not on generic WordPress API names.
+3. `draft.yar` — a YARA rule. Mark it a draft from a single offering in its `meta`; base strings on distinctive constants (hooks, meta/option keys, hex-obfuscated literals, unique user-facing text), not on generic WordPress API names.
 
 Then confirm the run is snapshotted (`ls snapshots/` should hold a recent one; if not, `make snapshot`).
 
