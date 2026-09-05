@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KadathSandbox</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<h1>KadathSandbox — detonate</h1>
+<section id="upload">
+  <form id="run-form">
+    <input type="hidden" name="csrf" value="__CSRF__">
+    <label>Sample (.php, .zip, plugin/theme dir zipped): <input type="file" name="sample" required></label>
+    <label>Recipe (optional .kadath): <input type="file" name="recipe"></label>
+    <label><input type="checkbox" name="reset" value="on"> Reset stack first (clean slate)</label>
+    <button type="submit">Detonate</button>
+  </form>
+</section>
+<section id="running" hidden>
+  <h2>Running…</h2>
+  <p class="note">The first run can take several minutes while the self-test gate runs. This is not a hang.</p>
+  <pre id="log"></pre>
+</section>
+<section id="report" hidden></section>
+<script src="/app.js"></script>
+</body>
+</html>
