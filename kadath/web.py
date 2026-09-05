@@ -69,7 +69,6 @@ class JobManager:
             job.state = "error"
 
 
-import html
 import json
 import http.server
 import posixpath
@@ -146,7 +145,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._headers(404, "text/plain; charset=utf-8")
             self.wfile.write(b"not found")
             return
-        length = int(self.headers.get("Content-Length", "0") or "0")
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except (TypeError, ValueError):
+            self._headers(400, "text/plain; charset=utf-8")
+            self.wfile.write(b"bad content-length")
+            return
+        if length < 0:
+            self._headers(400, "text/plain; charset=utf-8")
+            self.wfile.write(b"bad content-length")
+            return
         if length > MAX_BODY:
             self._headers(413, "text/plain; charset=utf-8")
             self.wfile.write(b"upload too large")
@@ -154,7 +162,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         ctype = self.headers.get("Content-Type", "")
         body = self.rfile.read(length)
         fields, files = web_util.parse_multipart(ctype, body)
-        if fields.get("csrf") != self.server.csrf:
+        if not secrets.compare_digest(fields.get("csrf") or "", self.server.csrf):
             self._headers(403, "text/plain; charset=utf-8")
             self.wfile.write(b"bad csrf token")
             return
