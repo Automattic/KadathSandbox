@@ -52,7 +52,7 @@ Write all three into `$RUN`:
 2. `iocs.json` — machine-readable indicators. Conform to [references/iocs-schema.json](references/iocs-schema.json) exactly, so the threat-library tooling can ingest it.
 3. `draft.yar` — a YARA rule. Mark it a draft from a single offering in its `meta`; base strings on distinctive constants (hooks, meta/option keys, hex-obfuscated literals, unique user-facing text), not on generic WordPress API names.
 
-Then confirm the run is snapshotted (`ls snapshots/` should hold a recent one; if not, `make snapshot`).
+Then confirm the run's evidence is preserved: the `bin/kadath offer` engine bundles it (traces gzipped) into `$RUN/artifacts/`; a hand-staged run needs `make snapshot`. To read a gzipped trace from a bundle, `zcat $RUN/artifacts/xdebug/*.xt.gz | ...`. `artifacts/` itself holds only the current run — the engine clears prior traces each run.
 
 ## Red flags — stop
 

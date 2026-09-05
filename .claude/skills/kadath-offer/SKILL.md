@@ -39,7 +39,7 @@ mkdir -p "$RUN"
 
 `kadath-scry` reads `$RUN/run.env` and filters every artifact by `RUN_EPOCH`, so the run marker is the contract between the two skills. Record `RUN` and `RUN_EPOCH` and pass them to analysis.
 
-Snapshot the run before you leave: `make snapshot`. The sample runs as the same uid that owns the artifact directories, so it can delete its own traces; the snapshot is what makes that a nuisance, not a loss.
+Preserve the run before you leave. If you drove this through the `bin/kadath offer` engine, it already bundled the run's evidence (traces gzipped) into `reports/<slug>-<ts>/artifacts/` and cleared prior traces so `artifacts/` holds only this run. If you staged by hand, run `make snapshot` (it gzips traces into `snapshots/<ts>/`). Either way you have a durable copy: the sample runs as the uid that owns `artifacts/`, so it can delete its own traces, and the bundle is what makes that a nuisance, not a loss.
 
 ## Stage and trigger
 
@@ -52,7 +52,7 @@ The two rules that catch everyone:
 
 ## When it has run
 
-Confirm at least one new trace exists (`find artifacts/xdebug -name '*.xt' -newermt @$RUN_EPOCH`), `make snapshot`, then invoke **kadath-scry** with the `$RUN` directory. Do not write the report here — analysis is its own skill.
+Confirm at least one new trace exists (`find artifacts/xdebug -name '*.xt' -newermt @$RUN_EPOCH`), then invoke **kadath-scry** with the `$RUN` directory. The run's compressed evidence bundle is already under `$RUN/artifacts/` if the engine drove it; otherwise `make snapshot` first. Do not write the report here — analysis is its own skill.
 
 ## Red flags — stop
 

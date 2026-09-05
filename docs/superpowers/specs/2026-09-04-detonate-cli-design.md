@@ -93,7 +93,10 @@ theme).
 6. **Collect.**
    - Capture the after-state DB dump.
    - Enumerate this run's new artifacts (mtime ≥ `RUN_EPOCH`).
-   - `make snapshot`.
+   - Bundle the run: copy this run's artifacts into `reports/<slug>-<ts>/artifacts/`,
+     gzipping traces/logs (~16x); write the container logs. `isolate` clears the prior
+     run's Xdebug traces and Snuffleupagus dumps (never the container-held append logs) so
+     `artifacts/` stays at roughly one run. `make snapshot` (compressed) is the manual path.
 7. **Emit.**
    - Assemble and write `summary.json` and `iocs.json`.
    - Warn if no new Xdebug trace appeared (sample likely needs a recipe).

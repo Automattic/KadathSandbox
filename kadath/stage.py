@@ -21,6 +21,31 @@ def clear_samples(root):
             shutil.rmtree(p) if os.path.isdir(p) else os.remove(p)
 
 
+# Artifact subdirs safe to clear between runs: php-fpm writes a fresh Xdebug
+# trace file per request and closes it, and Snuffleupagus writes one dump per
+# rule and closes it. The append logs (dns, dropped, php-error, flows, pcap) are
+# held open by long-lived containers and must NOT be deleted here.
+_CLEARABLE_ARTIFACTS = ("xdebug", "sp-dumps")
+
+
+def clear_run_artifacts(root):
+    """Delete the previous run's Xdebug traces and Snuffleupagus dumps so
+    artifacts/ holds only the current run. The durable copy lives in the run's
+    report bundle. Leaves .gitkeep and every container-held log untouched."""
+    for sub in _CLEARABLE_ARTIFACTS:
+        d = os.path.join(root, "artifacts", sub)
+        if not os.path.isdir(d):
+            continue
+        for name in os.listdir(d):
+            if name == ".gitkeep":
+                continue
+            p = os.path.join(d, name)
+            try:
+                shutil.rmtree(p) if os.path.isdir(p) else os.remove(p)
+            except OSError:
+                pass
+
+
 def isolate(root, wp_exec):
     actions = []
     listing = wp_exec(["plugin", "list", "--field=name", "--status=active"])
@@ -40,6 +65,8 @@ def isolate(root, wp_exec):
             actions.append(f"delete user {uid}")
     clear_samples(root)
     actions.append("cleared samples/")
+    clear_run_artifacts(root)
+    actions.append("cleared prior traces/dumps")
     return actions
 
 

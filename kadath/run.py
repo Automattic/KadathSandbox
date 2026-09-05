@@ -4,14 +4,21 @@ config."""
 import argparse
 import fcntl
 import glob
+import gzip
 import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
 from datetime import datetime, timezone
+
+# Artifact file types worth compressing in a run bundle. Xdebug traces are the
+# bulk (a page view is ~200 MB of tab-separated text, ~16x smaller gzipped); the
+# text logs and the mitmproxy flow file compress well too.
+_GZIP_EXT = (".xt", ".log", ".mitm")
 
 from kadath import detect, stage, trigger, recipe, dbdiff, traceparse, network, summary
 from kadath.shell import run as sh, ShellError
@@ -72,6 +79,52 @@ def _dbstate():
     options = _wp(["--skip-plugins", "option", "list", "--format=json"]) or "[]"
     cron = _wp(["--skip-plugins", "cron", "event", "list", "--format=json"]) or "[]"
     return dbdiff.state_from_json(users, options, cron)
+
+
+def _bundle_artifacts(src, dest, epoch):
+    """Copy every artifact file with mtime >= epoch (this run's) from src into
+    dest, gzipping traces/logs and copying the rest verbatim. Pure filesystem;
+    no Docker, so it is unit-testable. Returns the list of relative dest paths."""
+    written = []
+    for r, _dirs, files in os.walk(src):
+        for fn in files:
+            if fn == ".gitkeep":
+                continue
+            fp = os.path.join(r, fn)
+            try:
+                if os.path.getmtime(fp) < epoch:
+                    continue
+            except OSError:
+                continue
+            rel = os.path.relpath(fp, src)
+            os.makedirs(os.path.join(dest, os.path.dirname(rel)), exist_ok=True)
+            if fn.endswith(_GZIP_EXT):
+                out = os.path.join(dest, rel) + ".gz"
+                with open(fp, "rb") as fi, gzip.open(out, "wb") as fo:
+                    shutil.copyfileobj(fi, fo)
+                written.append(rel + ".gz")
+            else:
+                shutil.copy2(fp, os.path.join(dest, rel))
+                written.append(rel)
+    return written
+
+
+def _bundle_run(run_dir, epoch):
+    """Write this run's durable evidence into the report dir: its artifacts
+    (compressed) plus the container logs. Best-effort — a bundle failure must
+    not fail the run."""
+    try:
+        _bundle_artifacts(os.path.join(ROOT, "artifacts"),
+                          os.path.join(run_dir, "artifacts"), epoch)
+    except OSError:
+        pass
+    try:
+        out = sh(["docker", "compose", "logs", "--no-color", "wordpress", "gateway"],
+                 cwd=ROOT).stdout
+        with open(os.path.join(run_dir, "compose-logs.txt"), "w") as f:
+            f.write(out)
+    except (ShellError, OSError):
+        pass
 
 
 def _new_files(pattern, epoch):
@@ -258,10 +311,7 @@ def offer(argv):
         traces = _new_files(os.path.join(ROOT, "artifacts/xdebug/*.xt"), epoch)
         sp_dumps = _new_files(os.path.join(ROOT, "artifacts/sp-dumps/*"), epoch)
         pcaps = _new_files(os.path.join(ROOT, "artifacts/pcap/*"), epoch)
-        try:
-            sh(["make", "snapshot"], cwd=ROOT)
-        except ShellError:
-            pass
+        _bundle_run(run_dir, epoch)
 
         # assemble
         warnings = [] if traces else ["no new trace produced; sample may need a recipe"]

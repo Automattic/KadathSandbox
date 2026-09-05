@@ -75,3 +75,21 @@ def test_place_zip_webshell(tmp_path):
     d = detect.detect(str(z))
     staged = stage.place(str(root), str(z), d)
     assert os.path.isfile(os.path.join(root, "samples/webroot/c99.php"))
+
+
+def test_clear_run_artifacts_keeps_logs_and_gitkeep(tmp_path):
+    from kadath import stage
+    root = tmp_path
+    for sub in ("xdebug", "sp-dumps", "dns", "pcap"):
+        (root / "artifacts" / sub).mkdir(parents=True)
+        (root / "artifacts" / sub / ".gitkeep").write_text("")
+    (root / "artifacts" / "xdebug" / "trace.1.xt").write_text("t")
+    (root / "artifacts" / "sp-dumps" / "sp_dump.abc").write_text("d")
+    (root / "artifacts" / "dns" / "dns.log").write_text("q")      # container-held: keep
+    (root / "artifacts" / "pcap" / "s.pcap00").write_bytes(b"p")  # container-held: keep
+    stage.clear_run_artifacts(str(root))
+    assert not (root / "artifacts" / "xdebug" / "trace.1.xt").exists()
+    assert not (root / "artifacts" / "sp-dumps" / "sp_dump.abc").exists()
+    assert (root / "artifacts" / "xdebug" / ".gitkeep").exists()
+    assert (root / "artifacts" / "dns" / "dns.log").exists()      # untouched
+    assert (root / "artifacts" / "pcap" / "s.pcap00").exists()    # untouched

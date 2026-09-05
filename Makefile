@@ -23,10 +23,16 @@ selftest:
 # is what makes that a nuisance instead of a loss.
 snapshot:
 	@ts=$$(date +%Y%m%d-%H%M%S); dir=snapshots/$$ts; \
-	  mkdir -p "$$dir"; \
-	  cp -a artifacts "$$dir/artifacts"; \
+	  mkdir -p "$$dir/artifacts"; \
+	  ( cd artifacts && find . -type f ! -name .gitkeep | while read -r f; do \
+	      mkdir -p "../$$dir/artifacts/$$(dirname "$$f")"; \
+	      case "$$f" in \
+	        *.xt|*.log|*.mitm) gzip -c "$$f" > "../$$dir/artifacts/$$f.gz" ;; \
+	        *) cp -a "$$f" "../$$dir/artifacts/$$f" ;; \
+	      esac; \
+	    done ); \
 	  docker compose logs --no-color wordpress gateway > "$$dir/compose-logs.txt" 2>&1 || true; \
-	  echo "snapshot: $$dir ($$(du -sh "$$dir" | cut -f1))"
+	  echo "snapshot: $$dir ($$(du -sh "$$dir" | cut -f1)) — traces/logs gzipped"
 
 logs:
 	docker compose logs -f gateway wordpress

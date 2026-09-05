@@ -14,7 +14,7 @@ Run the stack, keep it trustworthy, and never trade containment for convenience.
 |---|---|---|
 | Build and start | `make up` | builds, starts db/gateway/wpnet/netcap/wordpress, waits for health |
 | Prove it works | `make selftest` | 15 assertions across all layers; **the gate before any real sample** |
-| Save a run | `make snapshot` | copies `artifacts/` + container logs to `snapshots/<ts>/` |
+| Save a run | `make snapshot` | copies `artifacts/` (traces/logs gzipped) + container logs to `snapshots/<ts>/` |
 | Wipe everything | `make reset` | `down -v` + clears `artifacts/`; rebuilds WordPress, DB, and the mitmproxy CA from scratch (minutes) |
 | Tail logs | `make logs` | gateway + wordpress |
 | Shell in WordPress | `make shell` | uid 33, read-only rootfs |
@@ -53,4 +53,4 @@ The one legitimate way to let a sample reach a private lab target: the documente
 
 ## Between samples
 
-`make snapshot` the finished run, then either `make reset` for a guaranteed clean slate, or keep the stack and rely on the run-marker + `RUN_EPOCH` filtering that kadath-offer and kadath-scry use to separate runs. Reset is slower but removes all doubt; the marker approach is fast and is what those skills assume by default.
+The `bin/kadath offer` engine bundles each run's evidence (traces gzipped) into `reports/<slug>-<ts>/artifacts/` and clears the prior run's traces on the next offer, so `artifacts/` stays at roughly one run and per-run bundles are ~tens of MB, not tens of GB. For a hand-staged run, `make snapshot` (now compressed). `make reset` still wipes everything for a guaranteed clean slate. **Never blanket-delete files under `artifacts/` (e.g. `find artifacts -delete`) while the stack is up** — `dns.log`, `dropped.log`, `flows.mitm` and the pcap are held open by the gateway and netcap containers, and unlinking them stops network capture until those containers restart. Clear via `make reset`, or restart `gateway`/`netcap` after any such deletion.

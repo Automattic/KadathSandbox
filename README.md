@@ -149,11 +149,11 @@ behaviour traced.
   in `php-error.log`, and `docker compose run --rm --no-deps --entrypoint sh netguard -c 'iptables
   -nvL OUTPUT'` gives per-rule drop counters.
 - `make logs` tails gateway and wordpress.
-- `make snapshot` — **do this at the end of every offering.** It copies `artifacts/` and the
-  `wordpress`/`gateway` container logs into `snapshots/<timestamp>/`. The sample runs as uid 33
-  and the artifact directories have to be writable by uid 33 for PHP to write into them at all,
-  so a sample that wants to cover its tracks can `unlink()` traces it has already produced.
-  Snapshotting is what makes that a nuisance rather than a loss.
+- **The run's evidence is preserved automatically.** `make offer` bundles each run into
+  `reports/<slug>-<ts>/artifacts/` with the traces gzipped (~16x), and clears the prior run's
+  traces on the next offer, so `artifacts/` stays at roughly one run and each bundle is tens of
+  MB. The sample runs as uid 33 and can `unlink()` its own live traces, but the bundle is the
+  durable copy. For a hand-staged run, `make snapshot` (also gzipped).
 
 ## OS-level monitoring (strace, eBPF)
 
@@ -207,17 +207,22 @@ Three artifacts grow without bound during a long offering and are worth watching
   oldest slice is overwritten, so a very chatty sample eventually loses its earliest packets.
 - `artifacts/mitm/flows.mitm` — **not** capped. Every decrypted request and response body is
   appended. A sample downloading large payloads in a loop will fill your disk.
-- `artifacts/xdebug/` — one trace file per HTTP request, and traces of a busy request are large
-  (`collect_assignments=1`, values up to 64 KB each). Expect roughly 100 MB per WordPress page view. Not capped either.
+- `artifacts/xdebug/` — one trace file per HTTP request; a WordPress page view is ~100-230 MB
+  (`collect_assignments=1`, values up to 64 KB each). Live traces are not capped, but the engine
+  clears the prior run's on the next offer and stores each run's gzipped (~16x) in the report
+  bundle, so they do not accumulate.
 
 ```bash
-make snapshot     # copy artifacts/ + wordpress and gateway logs into snapshots/<timestamp>/
+make snapshot     # gzip artifacts/ (traces compressed) + container logs into snapshots/<timestamp>/
 make reset        # down -v: wipes WordPress, database, the mitmproxy CA, and everything in artifacts/
 ```
 
 `make snapshot` before `make reset`, always: `reset` is unrecoverable. It removes only this
 project's own volumes and the contents of `artifacts/`; nothing outside the sandbox is touched.
-`snapshots/` is gitignored.
+`snapshots/` is gitignored. **Never blanket-delete files under `artifacts/` while the stack is
+up** (`find artifacts -delete` and the like): `dns.log`, `dropped.log`, `flows.mitm` and the pcap
+are held open by the gateway and netcap containers, and unlinking them silently stops network
+capture until those containers restart. Use `make reset`, or restart `gateway`/`netcap` after.
 
 ## How containment works
 
