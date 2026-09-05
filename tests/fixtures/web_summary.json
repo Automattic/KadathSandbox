@@ -1,0 +1,11 @@
+{
+  "sample": {"filename": "x.php", "sha256": "a", "type": "plugin"},
+  "run": {"epoch": 1, "utc": "2026-09-05T00:00:00Z", "slug": "x", "trigger_actions": [], "reset": false},
+  "db_diff": {"users_added": [{"id": 10, "login": "sys_maint", "email": "s@x", "roles": ["administrator"]}],
+              "users_removed": [], "users_role_changed": [], "options_added": [], "options_changed": [], "cron_added": []},
+  "callchain": [{"function": "wp_create_user", "file": "/samples/plugins/x/x.php", "line": 12}],
+  "dangerous_calls": [], "files_written": [],
+  "network": {"dns": [], "flows": [], "dropped": []},
+  "artifacts": {"traces": ["/REPO/artifacts/xdebug/trace.1.xt"], "sp_dumps": [], "pcaps": []},
+  "warnings": []
+}
