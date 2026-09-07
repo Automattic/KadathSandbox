@@ -7,7 +7,7 @@ import os
 import re
 from kadath import llm, manifest
 from kadath.cavern import UNTRUSTED_PREAMBLE, load_prompt
-from kadath.pilgrim_offer import VERDICT_SCHEMA, open_text
+from kadath.pilgrim_offer import VERDICT_SCHEMA, final_verdict, open_text
 
 TOOL_CAP = 25
 WP_ALLOW = ("user list", "option get", "cron event list", "plugin list")
@@ -28,7 +28,7 @@ TOOLS = [
      "parameters": {"type": "object", "required": ["start_line", "end_line"],
                     "properties": {"start_line": {"type": "integer"}, "end_line": {"type": "integer"}}}}},
     {"type": "function", "function": {"name": "wp_read",
-     "description": "Read the run's recorded WordPress database state, unfiltered (--skip-plugins). Allowed: 'user list', 'option get <name>', 'cron event list', 'plugin list'.",
+     "description": "Read the WordPress database state recorded for this run (users, options, cron added by the sample). Allowed: 'user list', 'option get <name>', 'cron event list', 'plugin list'.",
      "parameters": {"type": "object", "required": ["subcommand"], "properties": {"subcommand": {"type": "string"}}}}},
 ]
 
@@ -132,7 +132,11 @@ class ToolBox:
 def verify_claims(evidence, outputs):
     kept, dropped = [], []
     for e in evidence:
-        (kept if any(e["quote"] in o for o in outputs) else dropped).append(e)
+        quote = e.get("quote", "")
+        if quote.strip() and any(quote in o for o in outputs):
+            kept.append(e)
+        else:
+            dropped.append(e)
     return kept, dropped
 
 
@@ -145,7 +149,8 @@ def run(case, row, client, prompts_dir):
     intro = (UNTRUSTED_PREAMBLE + f"\nCase {case.id}. First-pass verdict: {v['verdict']} "
              f"(deterministic {v['deterministic']['level']}, model {v.get('model_verdict')}, "
              f"confidence {v.get('confidence')}); coverage {v.get('coverage')}.\n"
-             f"Deterministic reasons: {json.dumps(v['deterministic'].get('reasons', []))}\n"
+             "Deterministic reasons:\n```json\n"
+             f"{json.dumps(v['deterministic'].get('reasons', []))}\n```\n"
              "Investigate with the tools, then say you are done.")
     msgs = [{"role": "system", "content": system}, {"role": "user", "content": intro}]
     status = "ok"
@@ -157,7 +162,8 @@ def run(case, row, client, prompts_dir):
         for tc in r["tool_calls"]:
             if tb.calls >= TOOL_CAP:
                 status = "tool-cap"
-                break
+                msgs = msgs + [{"role": "tool", "content": "not answered: tool budget exhausted"}]
+                continue
             fn = tc.get("function", {})
             out = tb.dispatch(fn.get("name"), fn.get("arguments") or {})
             msgs = msgs + [{"role": "tool", "content": out[:8000]}]
@@ -169,10 +175,11 @@ def run(case, row, client, prompts_dir):
     kept, dropped = verify_claims(final["evidence"], tb.outputs)
     if status == "tool-cap":
         level, decided = "amber", "deepscry"
-    elif dropped:
+    elif dropped or not final["evidence"]:
         status, level, decided = "unverified-claims", "amber", "deepscry"
     else:
-        level, decided = final["verdict"], "deepscry"
+        level, _ = final_verdict(v["deterministic"]["level"], final["verdict"])
+        decided = "deepscry"
     v.update(verdict=level, decided_by=decided, deepscry={
         "status": status, "model_verdict": final["verdict"], "confidence": final["confidence"],
         "reason": final["reason"], "evidence": kept, "dropped_claims": dropped,

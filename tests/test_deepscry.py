@@ -49,9 +49,12 @@ def test_toolbox_reads_and_caps(tmp_path):
 def test_verify_claims():
     outputs = ["line with zz_maint here", "other"]
     ev = [{"claim": "creates admin", "source": "read_trace", "quote": "zz_maint"},
-          {"claim": "invented", "source": "read_dns", "quote": "not-there"}]
+          {"claim": "invented", "source": "read_dns", "quote": "not-there"},
+          {"claim": "empty quote", "source": "read_dns", "quote": ""},
+          {"claim": "whitespace quote", "source": "read_dns", "quote": "   "}]
     kept, dropped = deepscry.verify_claims(ev, outputs)
-    assert [k["claim"] for k in kept] == ["creates admin"] and [d["claim"] for d in dropped] == ["invented"]
+    assert [k["claim"] for k in kept] == ["creates admin"]
+    assert [d["claim"] for d in dropped] == ["invented", "empty quote", "whitespace quote"]
 
 
 class FakeClient:
@@ -74,14 +77,14 @@ class FakeClient:
                 "parsed": None, "messages": messages + [reply]}
 
 
-def _case(tmp_path, rd, verdict="amber"):
+def _case(tmp_path, rd, verdict="amber", det_level="amber"):
     lib = tmp_path / "lib"
     d = lib / "FIO-3"
     (d / "kadath").mkdir(parents=True)
     (d / "s.php").write_text("<?php\nwp_create_user('zz_maint','p');\n")
     (d / "kadath" / "verdict.json").write_text(json.dumps(
         {"verdict": verdict, "decided_by": "deterministic", "confidence": 0.5, "coverage": "full",
-         "deterministic": {"level": "amber", "reasons": []}, "model_verdict": "green",
+         "deterministic": {"level": det_level, "reasons": []}, "model_verdict": "green",
          "run_dir": rd, "reason": "?"}))
     (d / "kadath" / "report.md").write_text("# Triage\n")
     return library.walk(str(lib))[0]
@@ -105,6 +108,7 @@ def test_run_tool_loop_and_upgrade(tmp_path):
     msgs, kw = client.calls[0]
     assert kw["profile"] == "deepscry" and kw["think"] is True and kw["tools"] == deepscry.TOOLS
     assert msgs[0]["content"].startswith("# The Deep Scrying")
+    assert "```json" in msgs[1]["content"]
     assert client.calls[1][0][-1]["role"] == "tool" and "zz_maint" in client.calls[1][0][-1]["content"]
     assert client.calls[2][1]["json_schema"] == deepscry.SCRY_SCHEMA
     saved = json.loads(open(os.path.join(case.dir, "kadath", "verdict.json")).read())
@@ -129,3 +133,43 @@ def test_run_tool_cap(tmp_path):
     client = FakeClient([tc] * 30, FINAL)
     v = deepscry.run(case, {"case_id": "FIO-3"}, client, PROMPTS)
     assert v["verdict"] == "amber" and v["deepscry"]["status"] == "tool-cap" and v["deepscry"]["tool_calls"] == 25
+
+
+def test_run_empty_evidence_holds_amber(tmp_path):
+    rd = _run_dir(tmp_path)
+    case = _case(tmp_path, rd)
+    bad = dict(FINAL, verdict="green", evidence=[])
+    client = FakeClient([{"content": "done"}], bad)
+    v = deepscry.run(case, {"case_id": "FIO-3"}, client, PROMPTS)
+    assert v["verdict"] == "amber"
+    assert v["deepscry"]["status"] == "unverified-claims"
+
+
+def test_run_tool_cap_mid_batch(tmp_path):
+    rd = _run_dir(tmp_path)
+    case = _case(tmp_path, rd)
+    single = {"tool_calls": [{"function": {"name": "read_dns", "arguments": {}}}]}
+    batch3 = {"tool_calls": [{"function": {"name": "read_dns", "arguments": {}}} for _ in range(3)]}
+    client = FakeClient([single] * 24 + [batch3, {"content": "done"}], FINAL)
+    v = deepscry.run(case, {"case_id": "FIO-3"}, client, PROMPTS)
+    assert v["deepscry"]["tool_calls"] == 25
+    assert v["deepscry"]["status"] == "tool-cap"
+    final_msgs = client.calls[-1][0]
+    tool_msgs = [m for m in final_msgs if m.get("role") == "tool"]
+    assert len(tool_msgs) == 27
+    placeholders = [m for m in tool_msgs if m["content"].startswith("not answered")]
+    assert len(placeholders) == 2
+
+
+def test_run_cannot_clear_deterministic_red(tmp_path):
+    rd = _run_dir(tmp_path)
+    case = _case(tmp_path, rd, verdict="red", det_level="red")
+    green_final = dict(FINAL, verdict="green")
+    client = FakeClient([
+        {"tool_calls": [{"function": {"name": "read_trace", "arguments": {"pattern": "wp_create_user", "max_lines": 5}}}]},
+        {"content": "done"},
+    ], green_final)
+    v = deepscry.run(case, {"case_id": "FIO-3"}, client, PROMPTS)
+    assert v["verdict"] == "red"
+    assert v["deepscry"]["model_verdict"] == "green"
+    assert v["deepscry"]["status"] == "ok"
