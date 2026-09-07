@@ -24,6 +24,8 @@ def test_check_yara_and_split():
     rule = 'rule x { strings: $a = "wp_create_user" $b = "zz_sys_maint" condition: any of them }'
     assert po.check_yara(rule) == ["wp_create_user"]
     assert po.check_yara('rule y { strings: $a = "zz_sys_maint" condition: $a }') == []
+    assert po.check_yara(
+        'rule z { strings: $a = "add_action(\'kadath_" condition: $a }') == ["add_action"]
     md, yar = po.split_report("# Triage\nbody\n=====DRAFT.YAR=====\nrule z { condition: true }\n")
     assert md == "# Triage\nbody" and yar == "rule z { condition: true }"
     with pytest.raises(ValueError):
@@ -56,11 +58,15 @@ def test_evidence_pack_contents():
         s = json.load(f)
     cav = {"family": "backdoor", "regions": [{"start_line": 12, "end_line": 14, "why": "user"}], "needs_input": "none"}
     det = {"level": "red", "reasons": ["administrator 'sys_maint' created"]}
-    pack = po.evidence_pack(s, cav, det, "2\t1\t0\tx", [{"host": "evil.test", "path": "/c2", "request_body": "hi", "response_body": "ok"}])
+    trace_with_fence = "2\t1\t0\tx ```rm -rf /```"
+    pack = po.evidence_pack(s, cav, det, trace_with_fence, [{"host": "evil.test", "path": "/c2", "request_body": "hi", "response_body": "ok"}])
     assert pack.startswith(po.UNTRUSTED_PREAMBLE)
     for needle in ("DETERMINISTIC VERDICT", "red", "sys_maint", "STATIC JUDGMENT", "backdoor",
                    "TRACE EXCERPT", "FLOW BODIES", "evil.test", "DB DIFF"):
         assert needle in pack
+    # A trace excerpt containing ``` cannot close the fence early: the whole pack
+    # has exactly 2 fence markers per section (10 sections), no stray ones.
+    assert pack.count("```") == 20
     # Check that FLOW BODIES section is inside a json fence
     flow_start = pack.find("=== FLOW BODIES")
     flow_end = pack.find("=== ", flow_start + 1)
@@ -137,7 +143,7 @@ GOOD_VERDICT = {"verdict": "red", "confidence": 0.95, "coverage": "full",
 
 def test_run_writes_all_outputs(tmp_path, monkeypatch):
     case, root, eng = _setup(tmp_path)
-    monkeypatch.setattr(po, "flow_bodies", lambda root, epoch: [])
+    monkeypatch.setattr(po, "flow_bodies", lambda root, epoch: ([], None))
     client = FakeClient(GOOD_VERDICT, ["# Triage Report\nbody\n=====DRAFT.YAR=====\nrule kadath_FIO_7 { strings: $a = \"zz_backdoor_key\" condition: $a }\n"])
     v = po.run(case, {"case_id": "FIO-7"}, client, str(root), PROMPTS, [str(eng)])
     kd = os.path.join(case.dir, "kadath")
@@ -150,12 +156,14 @@ def test_run_writes_all_outputs(tmp_path, monkeypatch):
     assert any(i["value"] == "zz_backdoor_key" for i in iocs["indicators"])
     assert "RUN_DIR=" in open(os.path.join(kd, "run.env")).read()
     assert os.path.exists(os.path.join(v["run_dir"], "evidence.json"))
+    evidence = json.load(open(os.path.join(v["run_dir"], "evidence.json")))
+    assert evidence["flow_bodies_error"] is None
     assert client.calls[0][1]["profile"] == "offer" and client.calls[1][1]["profile"] == "offer"
 
 
 def test_run_disagreement_keeps_red_and_yara_regenerates(tmp_path, monkeypatch):
     case, root, eng = _setup(tmp_path)
-    monkeypatch.setattr(po, "flow_bodies", lambda root, epoch: [])
+    monkeypatch.setattr(po, "flow_bodies", lambda root, epoch: ([], None))
     bad = "# R\n=====DRAFT.YAR=====\nrule k { strings: $a = \"wp_create_user\" condition: $a }\n"
     client = FakeClient(dict(GOOD_VERDICT, verdict="green"), [bad, bad])
     v = po.run(case, {"case_id": "FIO-7"}, client, str(root), PROMPTS, [str(eng)])
@@ -166,7 +174,7 @@ def test_run_disagreement_keeps_red_and_yara_regenerates(tmp_path, monkeypatch):
 
 def test_run_coverage_defaults_from_cavern_and_fatal(tmp_path, monkeypatch):
     case, root, eng = _setup(tmp_path)
-    monkeypatch.setattr(po, "flow_bodies", lambda root, epoch: [])
+    monkeypatch.setattr(po, "flow_bodies", lambda root, epoch: ([], None))
     with open(os.path.join(case.dir, "kadath", "cavern.json"), "w") as f:
         json.dump({"family": "webshell", "regions": [], "needs_input": "password"}, f)
     client = FakeClient(dict(GOOD_VERDICT, coverage="full"), ["# R\n=====DRAFT.YAR=====\nrule k { strings: $a = \"zz\" condition: $a }\n"])
@@ -177,7 +185,7 @@ def test_run_coverage_defaults_from_cavern_and_fatal(tmp_path, monkeypatch):
 
 def test_run_missing_marker_degrades(tmp_path, monkeypatch):
     case, root, eng = _setup(tmp_path)
-    monkeypatch.setattr(po, "flow_bodies", lambda root, epoch: [])
+    monkeypatch.setattr(po, "flow_bodies", lambda root, epoch: ([], None))
     # Two replies without the marker line
     client = FakeClient(GOOD_VERDICT, ["# No marker here\n", "# Still no marker\n"])
     v = po.run(case, {"case_id": "FIO-7"}, client, str(root), PROMPTS, [str(eng)])
@@ -193,3 +201,19 @@ def test_run_missing_marker_degrades(tmp_path, monkeypatch):
     assert "no rule produced: model reply lacked the =====DRAFT.YAR===== marker" in draft_yar
     # Client was called 3 times: verdict, first report attempt, second report attempt
     assert len(client.calls) == 3
+
+
+def test_flow_bodies_reports_failure(monkeypatch, capsys):
+    def boom(*a, **k):
+        raise OSError("no docker")
+    monkeypatch.setattr(po.subprocess, "run", boom)
+    bodies, err = po.flow_bodies("/x", 0)
+    assert bodies == []
+    assert "no docker" in err
+    assert "no docker" in capsys.readouterr().err
+
+
+def test_ioc_types_match_schema():
+    with open(os.path.join(ROOT, ".claude", "skills", "kadath-scry", "references", "iocs-schema.json")) as f:
+        schema = json.load(f)
+    assert po.IOC_TYPES == schema["properties"]["indicators"]["items"]["properties"]["type"]["enum"]

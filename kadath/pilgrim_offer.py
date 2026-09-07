@@ -6,6 +6,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 from kadath import cavern, llm, manifest, summary as summary_mod, web_verdict
 from kadath.cavern import UNTRUSTED_PREAMBLE, load_prompt
 
@@ -54,7 +55,7 @@ def final_verdict(det_level, model_level):
 def check_yara(text):
     m = re.search(r"strings:(.*?)condition:", text, re.S)
     body = m.group(1) if m else text
-    return [n for n in YARA_DENYLIST if re.search(r'["\']' + re.escape(n) + r'["\']', body)]
+    return [n for n in YARA_DENYLIST if re.search(re.escape(n), body)]
 
 
 def split_report(text):
@@ -117,12 +118,14 @@ def flow_bodies(root, epoch, timeout=120):
             ["docker", "compose", "exec", "-T", "-e", f"RUN_EPOCH={epoch}", "gateway",
              "mitmdump", "-nq", "-r", "/artifacts/mitm/flows.mitm", "-s", "/tmp/flowbody.py"],
             cwd=root, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=timeout)
-        return [json.loads(l) for l in out.stdout.splitlines() if l.startswith("{")]
-    except Exception:
-        return []
+        return [json.loads(l) for l in out.stdout.splitlines() if l.startswith("{")], None
+    except Exception as e:
+        print(f"[offer] flow bodies unavailable: {e}", file=sys.stderr)
+        return [], str(e)
 
 
 def _fence(title, body, lang=""):
+    body = body.replace("```", "'''")
     if lang:
         return f"\n=== {title} ===\n```{lang}\n{body}\n```\n"
     return f"\n=== {title} ===\n{body}\n"
@@ -171,15 +174,16 @@ def run(case, row, client, root, prompts_dir, engine_cmd):
         summ = json.load(f)
     det = web_verdict.compute(summ)
     traces = summ.get("artifacts", {}).get("traces", []) or []
-    if not all(os.path.exists(t) for t in traces):
+    if not traces or not all(os.path.exists(t) for t in traces):
         bundle = os.path.join(run_dir, "artifacts", "xdebug")
         traces = sorted(os.path.join(bundle, n) for n in os.listdir(bundle)) if os.path.isdir(bundle) else []
     trace_text = trace_excerpt(traces)
-    bodies = flow_bodies(root, summ.get("run", {}).get("epoch", 0))
+    bodies, flow_bodies_error = flow_bodies(root, summ.get("run", {}).get("epoch", 0))
     pack = evidence_pack(summ, cav, det, trace_text, bodies)
     with open(os.path.join(run_dir, "evidence.json"), "w") as f:
         json.dump({"trace_excerpt": trace_text, "flow_bodies": bodies, "network": summ.get("network"),
-                   "db_diff": summ.get("db_diff"), "deterministic": det}, f, indent=1)
+                   "db_diff": summ.get("db_diff"), "deterministic": det,
+                   "flow_bodies_error": flow_bodies_error}, f, indent=1)
 
     hint = f"\nCavern needs_input={cav.get('needs_input', 'unknown')}; php_fatal={_fatal_in_run(run_dir)}\n"
     sys_v, sha_v = load_prompt(prompts_dir, "offer_verdict")

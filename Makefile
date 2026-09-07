@@ -70,4 +70,4 @@ pilgrimage:
 # pre-flight before a week-long pilgrimage. CASES is a space-separated list.
 pilgrimage-smoke:
 	@test -n "$(LIBRARY)" && test -n "$(CASES)" || { echo "usage: make pilgrimage-smoke LIBRARY=<dir> CASES='ID1 ID2 ID3'"; exit 2; }
-	python3 bin/kadath pilgrimage "$(LIBRARY)" --pass all $(foreach c,$(CASES),--case $(c))
+	python3 bin/kadath pilgrimage "$(LIBRARY)" --pass all --limit 3 $(foreach c,$(CASES),--case $(c))

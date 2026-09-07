@@ -182,3 +182,19 @@ def test_run_cannot_clear_deterministic_red(tmp_path):
     assert v["verdict"] == "red"
     assert v["deepscry"]["model_verdict"] == "green"
     assert v["deepscry"]["status"] == "ok"
+
+
+def test_run_time_cap_holds_amber(tmp_path, monkeypatch):
+    rd = _run_dir(tmp_path)
+    case = _case(tmp_path, rd, det_level="amber")
+    calls = [0]
+
+    def fake_monotonic():
+        calls[0] += 1
+        return 0 if calls[0] == 1 else 10_000
+    monkeypatch.setattr(deepscry.time, "monotonic", fake_monotonic)
+    tc = {"tool_calls": [{"function": {"name": "read_dns", "arguments": {}}}]}
+    client = FakeClient([tc] * 5, dict(FINAL, verdict="red"))
+    v = deepscry.run(case, {"case_id": "FIO-3"}, client, PROMPTS)
+    assert v["deepscry"]["status"] == "time-cap"
+    assert v["verdict"] == "amber"

@@ -170,6 +170,7 @@ def test_main_offer_routes_to_scry_or_settles(tmp_path, monkeypatch):
         return v
 
     monkeypatch.setattr(pilgrimage, "_make_client", _fake_client)
+    monkeypatch.setattr(pilgrimage, "free_gb", lambda path: 999.0)
     monkeypatch.setattr(pilgrimage.pilgrim_offer, "run", fake_offer)
     rc = pilgrimage.main([str(lib), "--pass", "offer", "--no-stack"])
     assert rc == 0
@@ -239,6 +240,7 @@ def test_main_engine_error_marks_error_and_recovers_once(tmp_path, monkeypatch):
     m.flush()
 
     monkeypatch.setattr(pilgrimage, "_make_client", _fake_client)
+    monkeypatch.setattr(pilgrimage, "free_gb", lambda path: 999.0)
 
     def raise_engine_error(*a, **k):
         raise pilgrimage.pilgrim_offer.EngineError("boom")
@@ -258,3 +260,14 @@ def test_main_engine_error_marks_error_and_recovers_once(tmp_path, monkeypatch):
     rc = pilgrimage.main([str(lib), "--pass", "offer", "--retry-errors"])
     assert rc == 0
     assert recover_calls == [1]
+
+
+def test_main_warns_on_unknown_case(tmp_path, monkeypatch, capsys):
+    lib = tmp_path / "lib"
+    _lib_case(lib, "A")
+    monkeypatch.setattr(pilgrimage, "_make_client", _fake_client)
+    monkeypatch.setattr(pilgrimage.cavern, "run", lambda case, client, prompts:
+                        {"verdict": "green", "family": "benign", "worthy": False})
+    rc = pilgrimage.main([str(lib), "--pass", "cavern", "--case", "A", "--case", "NOPE", "--no-stack"])
+    assert rc == 0
+    assert "warning: case(s) not in library: NOPE" in capsys.readouterr().err

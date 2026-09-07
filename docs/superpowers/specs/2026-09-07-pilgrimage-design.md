@@ -330,6 +330,7 @@ profile are recorded in every `verdict.json`.
 5. The final verdict is strictly `max(deterministic, model)`; a disagreement never lowers it (that would let a model "green" erase a deterministic red) — it routes the case to the Deep Scrying instead, alongside ambers and reds with confidence < 0.6.
 6. When the Cavern model says `runnable: false` or `family: fragment`, the `confidence < 0.7` and `verdict == amber` forces are suppressed; the fact-based forces (`wp_` API usage, network primitive, blob) always apply. A file that cannot run is not worth an Offering, but a fragment that calls `wp_create_user` still gets one attempt.
 7. The Deep Scrying verdict is `max(deterministic, model)` in every outcome — verified, `unverified-claims`, and `tool-cap` — so deterministic evidence (an administrator created, non-core egress) is never cleared by a model; a model-only red can still be lowered. Its `wp_read` tool answers from the run's recorded `db_diff` (ruling 1) and its description says so.
+8. `evidence.json` (trace excerpt, flow bodies, network, DB diff, deterministic verdict) is written into the run bundle under KadathSandbox `reports/<slug>-<ts>/`, not under `<case>/kadath/`; the write constraint is about the threat library, and the Deep Scrying toolbox reads it from the bundle.
 
 ## Out of scope (v1)
 

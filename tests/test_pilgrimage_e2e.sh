@@ -4,7 +4,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 PORT=$((20000 + RANDOM % 20000))
 WORK="$(mktemp -d)"
-trap 'kill $SRV 2>/dev/null || true; rm -rf "$WORK" .kadath/webtest-report' EXIT
+fail=0
+trap 'kill $SRV 2>/dev/null || true; if [ "${fail:-0}" -ne 0 ]; then cat "$WORK/err.log" >&2; fi; rm -rf "$WORK" .kadath/webtest-report' EXIT
 cp -R tests/fixtures/library "$WORK/lib"
 sleep 1; touch "$WORK/ref"     # everything the pilgrimage writes is newer than this
 python3 tests/fixtures/fake_ollama.py "$PORT" & SRV=$!

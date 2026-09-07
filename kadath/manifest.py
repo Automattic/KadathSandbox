@@ -28,8 +28,12 @@ class Manifest:
         self.rows = collections.OrderedDict()
         if not os.path.exists(self.path):
             return
-        with open(self.path, newline="") as f:
-            for r in csv.DictReader(f):
+        with open(self.path, newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            if reader.fieldnames != COLUMNS:
+                raise ValueError(f"{self.path}: unexpected manifest columns {reader.fieldnames}; "
+                                 f"expected {COLUMNS}")
+            for r in reader:
                 self.rows[r["case_id"]] = {c: r.get(c, "") or "" for c in COLUMNS}
 
     def ensure_rows(self, cases):
@@ -80,11 +84,13 @@ class Manifest:
 
     def flush(self):
         tmp = self.path + ".tmp"
-        with open(tmp, "w", newline="") as f:
+        with open(tmp, "w", newline="", encoding="utf-8") as f:
             w = csv.DictWriter(f, fieldnames=COLUMNS)
             w.writeheader()
             for r in self.rows.values():
                 w.writerow(r)
+            f.flush()
+            os.fsync(f.fileno())
         try:
             os.replace(tmp, self.path)
         finally:

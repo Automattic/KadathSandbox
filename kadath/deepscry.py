@@ -5,11 +5,13 @@ import copy
 import json
 import os
 import re
+import time
 from kadath import llm, manifest
 from kadath.cavern import UNTRUSTED_PREAMBLE, load_prompt
 from kadath.pilgrim_offer import VERDICT_SCHEMA, final_verdict, open_text
 
 TOOL_CAP = 25
+TIME_CAP_S = 900
 WP_ALLOW = ("user list", "option get", "cron event list", "plugin list")
 _SAFE_ARG = re.compile(r"^[A-Za-z0-9_\-.]{1,100}$")
 
@@ -125,6 +127,7 @@ class ToolBox:
                 out = fn(**(args or {}))
             except TypeError as e:
                 out = f"invalid arguments: {e}"
+        out = out[:8000]
         self.outputs.append(out)
         return out
 
@@ -154,26 +157,31 @@ def run(case, row, client, prompts_dir):
              "Investigate with the tools, then say you are done.")
     msgs = [{"role": "system", "content": system}, {"role": "user", "content": intro}]
     status = "ok"
+    deadline = time.monotonic() + TIME_CAP_S
     while True:
+        if time.monotonic() >= deadline:
+            status = "time-cap"
+            break
         r = client.chat(msgs, profile="deepscry", tools=TOOLS, think=True, timeout=900)
         msgs = r["messages"]
         if not r["tool_calls"]:
             break
         for tc in r["tool_calls"]:
+            fn = tc.get("function", {})
             if tb.calls >= TOOL_CAP:
                 status = "tool-cap"
-                msgs = msgs + [{"role": "tool", "content": "not answered: tool budget exhausted"}]
+                msgs = msgs + [{"role": "tool", "content": "not answered: tool budget exhausted",
+                                "tool_name": fn.get("name")}]
                 continue
-            fn = tc.get("function", {})
             out = tb.dispatch(fn.get("name"), fn.get("arguments") or {})
-            msgs = msgs + [{"role": "tool", "content": out[:8000]}]
+            msgs = msgs + [{"role": "tool", "content": out, "tool_name": fn.get("name")}]
         if status == "tool-cap":
             break
     final = client.chat(msgs + [{"role": "user", "content": "Produce the final verdict JSON now."}],
                         profile="deepscry", json_schema=SCRY_SCHEMA, think=False, timeout=600,
                         validate=lambda o: llm.validate_against(SCRY_SCHEMA, o))["parsed"]
     kept, dropped = verify_claims(final["evidence"], tb.outputs)
-    if status == "tool-cap":
+    if status in ("tool-cap", "time-cap"):
         level, decided = final_verdict(v["deterministic"]["level"], "amber")[0], "deepscry"
     elif dropped or not final["evidence"]:
         status, decided = "unverified-claims", "deepscry"

@@ -83,7 +83,7 @@ def _stack_up():
 
 def _stack_recover():
     try:
-        ps = sh(["docker", "compose", "ps", "--format", "json"], cwd=ROOT, check=False).stdout
+        ps = sh(["docker", "compose", "ps", "--format", "json"], cwd=ROOT, check=False, timeout=60).stdout
         if "wordpress" in ps and "running" in ps:
             return
         sh(["make", "down"], cwd=ROOT, timeout=300)
@@ -125,6 +125,10 @@ def main(argv):
 
     cases = library.walk(lib)
     if a.case:
+        found = {c.id for c in cases}
+        missing = [cid for cid in a.case if cid not in found]
+        if missing:
+            print(f"warning: case(s) not in library: {', '.join(missing)}", file=sys.stderr)
         cases = [c for c in cases if c.id in set(a.case)]
     if a.limit is not None:
         cases = cases[:a.limit]

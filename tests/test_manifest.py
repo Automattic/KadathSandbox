@@ -101,3 +101,32 @@ def test_update_unknown_and_histogram(tmp_path):
     m.update("C", final_verdict="red")
     assert m.histogram("final_verdict") == {"": 1, "red": 2}
     assert manifest.now_iso().endswith("Z")
+
+
+def test_load_rejects_unexpected_header(tmp_path):
+    p = tmp_path / "bad.csv"
+    cols = list(manifest.COLUMNS)
+    cols[0], cols[1] = cols[1], cols[0]     # reordered
+    with open(p, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=cols)
+        w.writeheader()
+    m = manifest.Manifest(str(p))
+    with pytest.raises(ValueError):
+        m.load()
+    p2 = tmp_path / "missing.csv"
+    with open(p2, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=manifest.COLUMNS[:-1])   # missing a column
+        w.writeheader()
+    m2 = manifest.Manifest(str(p2))
+    with pytest.raises(ValueError):
+        m2.load()
+
+
+def test_load_roundtrips_utf8(tmp_path):
+    m = manifest.Manifest(str(tmp_path / "t.csv"))
+    m.ensure_rows(_cases(tmp_path))
+    m.update("B", error="ração ✓")
+    m.flush()
+    m2 = manifest.Manifest(str(tmp_path / "t.csv"))
+    m2.load()
+    assert m2.rows["B"]["error"] == "ração ✓"
