@@ -133,7 +133,7 @@ def main(argv):
     m.load()
     m.ensure_rows(cases)
     if a.retry_errors or a.force:
-        m.retry(a.passes, force=a.force)
+        m.retry(a.passes, force=a.force, case_ids=set(by_id))
     m.flush()
 
     def do_cavern(row):
@@ -176,8 +176,9 @@ def main(argv):
     fns = {"cavern": do_cavern, "offer": do_offer, "scry": do_scry}
     for name in a.passes:
         rows = [r for r in m.pending(name) if r["case_id"] in by_id]
-        if name == "offer":
-            rows = [r for r in rows if free_gb(ROOT) >= a.min_free_gb]
+        if name == "offer" and rows and free_gb(ROOT) < a.min_free_gb:
+            print(f"error: free disk below {a.min_free_gb} GB; aborting before the offer pass", file=sys.stderr)
+            return 2
         print(f"== {name}: {len(rows)} case(s) pending", file=sys.stderr)
         counts = run_pass(name, m, rows, fns[name], breaker=3 if name != "offer" else 2)
         print(f"== {name} done: {counts}; verdicts {m.histogram(f'{name}_verdict')}", file=sys.stderr)

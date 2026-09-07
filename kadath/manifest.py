@@ -68,9 +68,11 @@ class Manifest:
                 raise KeyError(k)
             row[k] = "" if v is None else str(v)
 
-    def retry(self, passes, force=False):
+    def retry(self, passes, force=False, case_ids=None):
         flip = ("error", "timeout", "done") if force else ("error", "timeout")
         for r in self.rows.values():
+            if case_ids is not None and r["case_id"] not in case_ids:
+                continue
             for p in passes:
                 if r[f"{p}_status"] in flip:
                     r[f"{p}_status"] = "pending"

@@ -65,6 +65,16 @@ def test_retry_and_force(tmp_path):
     assert m.rows["A"]["cavern_status"] == "skipped"
 
 
+def test_retry_scoped(tmp_path):
+    m = manifest.Manifest(str(tmp_path / "t.csv"))
+    m.ensure_rows(_cases(tmp_path))
+    m.update("B", cavern_status="error", error="boom")
+    m.update("C", cavern_status="error", error="bang")
+    m.retry(["cavern"], case_ids={"B"})
+    assert m.rows["B"]["cavern_status"] == "pending" and m.rows["B"]["error"] == ""
+    assert m.rows["C"]["cavern_status"] == "error" and m.rows["C"]["error"] == "bang"
+
+
 def test_atomic_flush_keeps_old_on_crash(tmp_path, monkeypatch):
     p = tmp_path / "t.csv"
     m = manifest.Manifest(str(p))
