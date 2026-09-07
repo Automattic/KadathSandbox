@@ -135,6 +135,15 @@ def test_run_tool_cap(tmp_path):
     assert v["verdict"] == "amber" and v["deepscry"]["status"] == "tool-cap" and v["deepscry"]["tool_calls"] == 25
 
 
+def test_run_tool_cap_keeps_deterministic_red(tmp_path):
+    rd = _run_dir(tmp_path)
+    case = _case(tmp_path, rd, det_level="red")
+    tc = {"tool_calls": [{"function": {"name": "read_dns", "arguments": {}}}]}
+    client = FakeClient([tc] * 30, FINAL)
+    v = deepscry.run(case, {"case_id": "FIO-3"}, client, PROMPTS)
+    assert v["verdict"] == "red" and v["deepscry"]["status"] == "tool-cap" and v["deepscry"]["tool_calls"] == 25
+
+
 def test_run_empty_evidence_holds_amber(tmp_path):
     rd = _run_dir(tmp_path)
     case = _case(tmp_path, rd)

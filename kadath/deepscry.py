@@ -174,9 +174,10 @@ def run(case, row, client, prompts_dir):
                         validate=lambda o: llm.validate_against(SCRY_SCHEMA, o))["parsed"]
     kept, dropped = verify_claims(final["evidence"], tb.outputs)
     if status == "tool-cap":
-        level, decided = "amber", "deepscry"
+        level, decided = final_verdict(v["deterministic"]["level"], "amber")[0], "deepscry"
     elif dropped or not final["evidence"]:
-        status, level, decided = "unverified-claims", "amber", "deepscry"
+        status, decided = "unverified-claims", "deepscry"
+        level = final_verdict(v["deterministic"]["level"], "amber")[0]
     else:
         level, _ = final_verdict(v["deterministic"]["level"], final["verdict"])
         decided = "deepscry"
