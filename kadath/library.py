@@ -22,8 +22,12 @@ _BLOB = re.compile(r"[A-Za-z0-9+/=]{200,}|(?:\\x[0-9a-fA-F]{2}){20,}")
 _LITERAL = re.compile(r"'([^'\\]|\\.)*'|\"([^\"\\]|\\.)*\"")
 
 
-_WANTS_WP = re.compile(r"(?:\bABSPATH\b|\bWPINC\b|\$wpdb\b|\bWP_[A-Z][A-Za-z_]+|\bwp_[a-z0-9_]+\s*\(|"
-                       r"\badd_(?:action|filter)\s*\(|\bget_option\s*\(|\bget_template_directory|wp-load\.php)")
+_WANTS_WP = re.compile(
+    r"(?:\bABSPATH\b|\bWPINC\b|\$wpdb\b|\bWP_[A-Z][A-Za-z_]+|\bwp_[a-z0-9_]+\s*\(|"
+    r"\b(?:add_action|add_filter|get_option|update_option|get_template_directory\w*|"
+    r"is_robots|has_nav_menu|language_attributes|bloginfo|body_class|post_class|the_content|"
+    r"get_header|get_footer|get_sidebar|dynamic_sidebar|is_admin|is_user_logged_in|"
+    r"current_user_can|esc_html|esc_attr|esc_url|_e|__)\s*\(|wp-load\.php)", re.IGNORECASE)
 
 
 def wants_wordpress(path):

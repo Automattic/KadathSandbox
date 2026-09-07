@@ -106,7 +106,10 @@ def add_shims(path, names):
 
 
 def add_class_shims(path, names):
-    """A catch-all class: any method or property read returns null."""
+    """A catch-all class: construction, instance/static calls, property reads
+    and writes, instanceof and type hints all work and return null. Not
+    covered: catch (X $e) blocks (the shim is not Throwable), static
+    properties, class constants, and missing interfaces."""
     with open(path, "r") as f:
         existing = f.read()
     with open(path, "a") as f:
@@ -118,6 +121,24 @@ def add_class_shims(path, names):
                     f"public static function __callStatic($n, $a) {{ return null; }} "
                     f"public function __get($n) {{ return null; }} public function __set($n, $v) {{}} }} }}\n")
             existing += f"class {n} "
+
+
+def prescan(scan_file, base_dir, root):
+    """Stub the literal __DIR__-relative includes of scan_file before the first
+    trigger. Returns (stubs, stub_files): the summary entries (round 0) and the
+    host paths written, in order, for stub_rounds to append shims to."""
+    made, files = [], []
+    try:
+        with open(scan_file, "r", errors="replace") as f:
+            source = f.read()
+    except OSError:
+        return made, files
+    for rel in static_includes(source):
+        hp = host_path("/" + os.path.relpath(os.path.join(base_dir, rel), root), root)
+        if hp and write_stub(hp):
+            files.append(hp)
+            made.append({"path": "/" + os.path.relpath(hp, root), "kind": "include", "round": 0})
+    return made, files
 
 
 def stub_rounds(root, err_log, err_off, retrigger, max_rounds=3, stub_files=None):

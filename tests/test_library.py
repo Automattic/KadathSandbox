@@ -155,7 +155,9 @@ def test_network_needs_url_for_file_readers(tmp_path):
 def test_wants_wordpress(tmp_path):
     for body, want in (("<?php add_action('init','f');", True), ("<?php if (!defined('ABSPATH')) exit;", True),
                        ("<?php global $wpdb; $wpdb->get_var('x');", True), ("<?php new WP_Error('x');", True),
-                       ("<?php eval($_POST['k']);", False), ("<?php echo 'hi';", False)):
+                       ("<?php eval($_POST['k']);", False), ("<?php echo 'hi';", False),
+                       ("<?php if (is_robots()) exit;", True), ("<html><?php language_attributes(); ?>", True),
+                       ("<?php Get_Option('x');", True), ("<?php echo __('hi');", True)):
         p = tmp_path / "s.php"
         p.write_text(body)
         assert library.wants_wordpress(str(p)) is want, body

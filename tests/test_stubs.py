@@ -182,3 +182,15 @@ def test_stub_rounds_shims_classes(tmp_path):
     made, fatal = stubs.stub_rounds(str(root), str(log), 0, lambda: None, stub_files=[str(shims)])
     assert made == [{"path": "WP_Error", "kind": "class", "round": 1}] and fatal is False
     assert "class WP_Error " in shims.read_text()
+
+
+def test_prescan_adopted_layout_keeps_shims_first(tmp_path):
+    root = tmp_path
+    staged = root / "samples" / "plugins" / "FIO-9"
+    staged.mkdir(parents=True)
+    (staged / "sample.php").write_text("<?php\nrequire_once __DIR__ . '/inc/a.php';\n")
+    (staged / "kadath-shims.php").write_text("<?php\n")
+    made, files = stubs.prescan(str(staged / "sample.php"), str(staged), str(root))
+    assert made == [{"path": "/samples/plugins/FIO-9/inc/a.php", "kind": "include", "round": 0}]
+    assert files == [str(staged / "inc" / "a.php")]
+    assert stubs.prescan(str(root / "nope.php"), str(staged), str(root)) == ([], [])

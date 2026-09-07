@@ -48,6 +48,7 @@ def clear_run_artifacts(root):
 
 ADOPT_WRAPPER = "kadath-wrapper.php"
 ADOPT_SHIMS = "kadath-shims.php"
+ADOPT_SAMPLE = "sample.php"
 
 
 def adopt(root, sample_path, slug):
@@ -58,15 +59,16 @@ def adopt(root, sample_path, slug):
     if os.path.isdir(d):
         shutil.rmtree(d)
     os.makedirs(d)
-    base = os.path.basename(sample_path)
-    shutil.copy2(sample_path, os.path.join(d, base))
+    # the sample is copied under a fixed name: its own filename is attacker
+    # data and must never be interpolated into generated PHP
+    shutil.copy2(sample_path, os.path.join(d, ADOPT_SAMPLE))
     with open(os.path.join(d, ADOPT_SHIMS), "w") as f:
         f.write("<?php // kadath shims: no-op stand-ins for functions and classes the adopted file expects\n")
     with open(os.path.join(d, ADOPT_WRAPPER), "w") as f:
         f.write("<?php\n/*\nPlugin Name: kadath-adopted " + slug + "\n"
                 "Description: KadathSandbox wrapper - a loose PHP file adopted as a plugin so WordPress is loaded beneath it.\n*/\n"
                 f"require_once __DIR__ . '/{ADOPT_SHIMS}';\n"
-                f"require_once __DIR__ . '/{base}';\n")
+                f"require_once __DIR__ . '/{ADOPT_SAMPLE}';\n")
     return d
 
 

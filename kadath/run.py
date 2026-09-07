@@ -286,19 +286,13 @@ def offer(argv):
         # a single file lifted out of a kit dies on its first require; stub the
         # literal includes up front, then let PHP name the rest after the trigger
         made_stubs, stub_files = [], []
-        scan_file, base_dir = None, None
         if a.stub_missing and os.path.isfile(staged):
-            scan_file, base_dir = staged, os.path.dirname(staged)
+            made_stubs, stub_files = stubs.prescan(staged, os.path.dirname(staged), ROOT)
         elif a.stub_missing and adopted:
-            scan_file, base_dir = os.path.join(staged, os.path.basename(a.sample)), staged
-            stub_files.append(os.path.join(staged, stage.ADOPT_SHIMS))   # shims load before the sample
-        if scan_file:
-            with open(scan_file, "r", errors="replace") as f:
-                for rel in stubs.static_includes(f.read()):
-                    hp = stubs.host_path("/" + os.path.relpath(os.path.join(base_dir, rel), ROOT), ROOT)
-                    if hp and stubs.write_stub(hp):
-                        stub_files.append(hp)
-                        made_stubs.append({"path": "/" + os.path.relpath(hp, ROOT), "kind": "include", "round": 0})
+            # the shims file loads before the sample, so it stays stub_files[0]
+            shims = os.path.join(staged, stage.ADOPT_SHIMS)
+            made_stubs, files = stubs.prescan(os.path.join(staged, stage.ADOPT_SAMPLE), staged, ROOT)
+            stub_files = [shims] + files
         sh(["docker", "compose", "up", "-d", "--force-recreate", "--wait", "wordpress"], cwd=ROOT)
 
         # activation for plugin/theme (state change; wrapper keeps it untraced)

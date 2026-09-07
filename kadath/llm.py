@@ -107,7 +107,7 @@ def _post(url, payload, timeout):
                 return json.loads(r.read().decode())
         except (urllib.error.URLError, OSError) as e:
             # one retry: Ollama drops idle keep-alive connections mid-run
-            if attempt == 0 and not isinstance(e, ValueError):
+            if attempt == 0:
                 continue
             raise LLMError(f"ollama request failed: {e}") from e
         except ValueError as e:
