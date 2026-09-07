@@ -275,13 +275,14 @@ def offer(argv):
                                   os.path.relpath(staged, ROOT))
         # a single file lifted out of a kit dies on its first require; stub the
         # literal includes up front, then let PHP name the rest after the trigger
-        made_stubs = []
+        made_stubs, stub_files = [], []
         if a.stub_missing and os.path.isfile(staged):
             staged_dir = os.path.dirname(staged)
             with open(staged, "r", errors="replace") as f:
                 for rel in stubs.static_includes(f.read()):
                     hp = stubs.host_path("/" + os.path.relpath(os.path.join(staged_dir, rel), ROOT), ROOT)
                     if hp and stubs.write_stub(hp):
+                        stub_files.append(hp)
                         made_stubs.append({"path": "/" + os.path.relpath(hp, ROOT), "kind": "include", "round": 0})
         sh(["docker", "compose", "up", "-d", "--force-recreate", "--wait", "wordpress"], cwd=ROOT)
 
@@ -322,9 +323,10 @@ def offer(argv):
         time.sleep(3)
         if a.stub_missing:
             def _retrigger():
+                session.actions.append("-- retrigger after stubbing --")
                 trigger.execute(session, actions)
                 time.sleep(3)
-            made, fatal = stubs.stub_rounds(ROOT, err_log, err_off, _retrigger)
+            made, fatal = stubs.stub_rounds(ROOT, err_log, err_off, _retrigger, stub_files=stub_files)
             made_stubs.extend(made)
         else:
             fatal = any("PHP Fatal error" in l for l in stubs.new_lines(err_log, err_off))

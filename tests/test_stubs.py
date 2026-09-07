@@ -124,3 +124,34 @@ def test_stub_rounds_cap(tmp_path):
         f.write(FATAL_REQ.replace("functions/functions.php", "m0.php") + "\n")
     made, fatal = stubs.stub_rounds(str(root), str(log), 0, retrigger, max_rounds=3)
     assert len(made) == 3 and n[0] == 3 and fatal is True
+
+
+def test_stub_rounds_shims_into_prescan_stub(tmp_path):
+    """The engine's static pre-scan stubbed the include before the first trigger;
+    the first fatal is then the undefined function — it must attach to that stub."""
+    root = tmp_path
+    pre = root / "samples" / "webroot" / "kit" / "helpers.php"
+    assert stubs.write_stub(str(pre))
+    log = root / "artifacts" / "php" / "php-error.log"
+    log.parent.mkdir(parents=True)
+    log.write_text(FATAL_FN + "\n")
+    calls = []
+
+    def retrigger():
+        calls.append(1)                     # shimmed run: no more fatals
+
+    made, fatal = stubs.stub_rounds(str(root), str(log), 0, retrigger, stub_files=[str(pre)])
+    assert made == [{"path": "helper_ping", "kind": "function", "round": 1}]
+    assert fatal is False and calls == [1]
+    assert "function helper_ping(" in pre.read_text()
+
+
+def test_static_includes_ignores_absolute_paths():
+    src = "<?php\nrequire('/etc/x.php');\nrequire_once __DIR__ . '/a.php';\ninclude 'b.php';\n"
+    assert stubs.static_includes(src) == ["a.php", "b.php"]
+
+
+def test_write_stub_survives_oserror(tmp_path):
+    blocker = tmp_path / "samples"
+    blocker.write_text("i am a file, not a directory")
+    assert stubs.write_stub(str(blocker / "webroot" / "x.php")) is False

@@ -9,9 +9,12 @@ import re
 _REQUIRED = re.compile(r"Failed opening (?:required )?'(/samples/[^']+)'")
 _INCLUDE_STREAM = re.compile(r"(?:include|require)(?:_once)?\((/samples/[^)]+)\): Failed to open stream")
 _UNDEFINED = re.compile(r"Call to undefined function ([A-Za-z_][A-Za-z0-9_]*)\(\) in /samples/")
+# __DIR__ . '/x.php' / dirname(__FILE__) . '/x.php' (leading slash stripped), or a
+# bare relative literal 'x.php'; an unprefixed absolute path is not ours to stub
 _STATIC_INC = re.compile(
-    r"\b(?:require|include)(?:_once)?\s*\(?\s*(?:__DIR__|dirname\(\s*__FILE__\s*\))?\s*\.?\s*"
-    r"['\"]/?([^'\"\s]+\.php)['\"]")
+    r"\b(?:require|include)(?:_once)?\s*\(?\s*(?:"
+    r"(?:__DIR__|dirname\(\s*__FILE__\s*\))\s*\.\s*['\"]/?([^'\"\s]+\.php)['\"]"
+    r"|['\"]([^'\"\s/][^'\"\s]*\.php)['\"])")
 _FUNC_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 STUB_HEADER = "<?php // kadath stub: missing dependency, created by the Offering\n"
 
@@ -62,7 +65,7 @@ def static_includes(source):
     are left to the fatal-driven rounds."""
     out = []
     for m in _STATIC_INC.finditer(source):
-        rel = m.group(1)
+        rel = m.group(1) or m.group(2)
         if ".." in rel or rel in out:
             continue
         out.append(rel)
@@ -72,9 +75,12 @@ def static_includes(source):
 def write_stub(path):
     if os.path.exists(path):
         return False
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w") as f:
-        f.write(STUB_HEADER)
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write(STUB_HEADER)
+    except OSError:
+        return False
     return True
 
 
@@ -89,13 +95,16 @@ def add_shims(path, names):
             existing += f"function {n}("
 
 
-def stub_rounds(root, err_log, err_off, retrigger, max_rounds=3, container_dir="/samples/webroot"):
+def stub_rounds(root, err_log, err_off, retrigger, max_rounds=3, stub_files=None):
     """Read the fatals the last trigger produced, stub what is missing, and
-    trigger again — up to max_rounds times. Returns (stubs, fatal_remaining):
-    stubs is a list of {"path", "kind": include|function, "round"}; fatal_remaining
-    is True when the final round still ended in a PHP fatal."""
+    trigger again — up to max_rounds times. stub_files are host paths of stubs
+    already written (the engine's static pre-scan), so a function the pre-scan's
+    stub should have defined has somewhere to get its shim. Returns
+    (stubs, fatal_remaining): stubs is a list of {"path", "kind":
+    include|function, "round"}; fatal_remaining is True when the final round
+    still ended in a PHP fatal."""
     made = []
-    stub_files = []
+    stub_files = list(stub_files or [])
     offset = err_off
     for rnd in range(1, max_rounds + 1):
         lines = new_lines(err_log, offset)
