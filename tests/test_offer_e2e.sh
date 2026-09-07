@@ -31,6 +31,16 @@ else
   echo "SKIP: backdoor sample not present at $BD"
 fi
 
+# 2b. a sample lifted out of a kit: missing include, then a missing function
+RUN3=$(python3 bin/kadath offer tests/needs_dep.php --json --stub-missing)
+echo "needs_dep summary: $RUN3"
+ck "stubs: include stubbed"                'python3 -c "import json;s=json.load(open(\"'"$RUN3"'\"));import sys;sys.exit(0 if any(x[\"kind\"]==\"include\" and x[\"path\"].endswith(\"kit/helpers.php\") for x in s[\"run\"][\"stubs\"]) else 1)"'
+ck "stubs: helper_ping shimmed"            'python3 -c "import json;s=json.load(open(\"'"$RUN3"'\"));import sys;sys.exit(0 if any(x[\"kind\"]==\"function\" and x[\"path\"]==\"helper_ping\" for x in s[\"run\"][\"stubs\"]) else 1)"'
+ck "stubs: no fatal remains"               'python3 -c "import json;s=json.load(open(\"'"$RUN3"'\"));import sys;sys.exit(0 if s[\"run\"][\"fatal\"] is False else 1)"'
+ck "stubs: example.com reached after stubs" 'python3 -c "import json;s=json.load(open(\"'"$RUN3"'\"));import sys;sys.exit(0 if any(\"example.com\"==f[\"host\"] for f in s[\"network\"][\"flows\"]) else 1)"'
+RUN4=$(python3 bin/kadath offer tests/needs_dep.php --json)
+ck "no stubs: fatal recorded"              'python3 -c "import json;s=json.load(open(\"'"$RUN4"'\"));import sys;sys.exit(0 if s[\"run\"][\"fatal\"] is True and s[\"run\"][\"stubs\"]==[] else 1)"'
+
 # 3. lock is released (a second run must succeed)
 python3 bin/kadath offer tests/probe.php --json >/dev/null 2>&1
 ck "lock released between runs" '[ $? -eq 0 ]'

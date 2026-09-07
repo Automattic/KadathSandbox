@@ -151,7 +151,10 @@ def run(case, row, client, prompts_dir):
     system, sha = load_prompt(prompts_dir, "deepscry")
     intro = (UNTRUSTED_PREAMBLE + f"\nCase {case.id}. First-pass verdict: {v['verdict']} "
              f"(deterministic {v['deterministic']['level']}, model {v.get('model_verdict')}, "
-             f"confidence {v.get('confidence')}); coverage {v.get('coverage')}.\n"
+             f"confidence {v.get('confidence')}, cavern {v.get('cavern_verdict', 'n/a')}); "
+             f"coverage {v.get('coverage')}; dependency stubs created: "
+             f"{len(v.get('stubs') or [])} (the sample ran against empty stand-ins for those files, "
+             "so behaviour that depended on them was not exercised).\n"
              "Deterministic reasons:\n```json\n"
              f"{json.dumps(v['deterministic'].get('reasons', []))}\n```\n"
              "Investigate with the tools, then say you are done.")

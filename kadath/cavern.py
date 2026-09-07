@@ -7,12 +7,12 @@ import os
 from kadath import library, llm, manifest
 
 FAMILIES = ["webshell", "backdoor", "dropper", "injector", "spam-seo", "credential-stealer",
-            "mailer", "uploader", "defacement", "benign", "fragment", "unknown"]
+            "phishing", "mailer", "uploader", "defacement", "benign", "fragment", "unknown"]
 
 SCHEMA = {
     "type": "object",
     "required": ["verdict", "confidence", "family", "host_code", "regions", "runnable",
-                 "needs_input", "worthy", "reason"],
+                 "needs_input", "worthy", "missing_deps", "reason"],
     "properties": {
         "verdict": {"type": "string", "enum": ["red", "amber", "green"]},
         "confidence": {"type": "number", "minimum": 0, "maximum": 1},
@@ -27,6 +27,11 @@ SCHEMA = {
         "needs_input": {"type": "string",
                         "enum": ["none", "password", "parameter", "cookie", "post-body", "unknown"]},
         "worthy": {"type": "boolean"},
+        "missing_deps": {"type": "array", "items": {
+            "type": "object", "required": ["path", "kind"],
+            "properties": {"path": {"type": "string", "maxLength": 200},
+                           "kind": {"type": "string",
+                                    "enum": ["include", "redirect", "data-file", "other"]}}}},
         "reason": {"type": "string", "maxLength": 300},
     },
 }

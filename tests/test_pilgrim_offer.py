@@ -66,7 +66,7 @@ def test_evidence_pack_contents():
         assert needle in pack
     # A trace excerpt containing ``` cannot close the fence early: the whole pack
     # has exactly 2 fence markers per section (10 sections), no stray ones.
-    assert pack.count("```") == 20
+    assert pack.count("```") == 22  # 11 sections × 2 fence markers
     # Check that FLOW BODIES section is inside a json fence
     flow_start = pack.find("=== FLOW BODIES")
     flow_end = pack.find("=== ", flow_start + 1)
@@ -217,3 +217,93 @@ def test_ioc_types_match_schema():
     with open(os.path.join(ROOT, ".claude", "skills", "kadath-scry", "references", "iocs-schema.json")) as f:
         schema = json.load(f)
     assert po.IOC_TYPES == schema["properties"]["indicators"]["items"]["properties"]["type"]["enum"]
+
+
+def test_final_verdict_with_cavern():
+    assert po.final_verdict("green", "green", "green") == ("green", "agree")
+    assert po.final_verdict("green", "green", "red") == ("red", "cavern")
+    assert po.final_verdict("green", "green", "amber") == ("amber", "cavern")
+    assert po.final_verdict("red", "green", "red") == ("red", "deterministic")   # tie: evidence wins
+    assert po.final_verdict("green", "red", "amber") == ("red", "model")
+    assert po.final_verdict("red", "red", None) == ("red", "agree")
+
+
+def test_evidence_pack_lists_stubs_and_cavern_verdict():
+    with open(os.path.join(FIX, "web_summary.json")) as f:
+        s = json.load(f)
+    s["run"]["stubs"] = [{"path": "/samples/webroot/functions/functions.php", "kind": "include", "round": 1}]
+    cav = {"verdict": "amber", "family": "phishing", "regions": [], "needs_input": "none",
+           "missing_deps": [{"path": "signin.php", "kind": "redirect"}]}
+    pack = po.evidence_pack(s, cav, {"level": "green", "reasons": []}, "", [])
+    assert "DEPENDENCY STUBS" in pack and "functions/functions.php" in pack
+    assert '"verdict": "amber"' in pack and "signin.php" in pack
+
+
+_N = [0]
+
+
+def _run_with_meta(tmp_path, monkeypatch, run_meta_extra, cav_extra, model_coverage="full"):
+    _N[0] += 1
+    tmp_path = tmp_path / f"t{_N[0]}"
+    tmp_path.mkdir()
+    case, root, eng = _setup(tmp_path)
+    monkeypatch.setattr(po, "flow_bodies", lambda root, epoch: ([], None))
+    run_dir = os.path.join(str(root), "reports", "FIO-7-x")
+    with open(os.path.join(run_dir, "summary.json")) as f:
+        s = json.load(f)
+    s["run"].update(run_meta_extra)
+    with open(os.path.join(run_dir, "summary.json"), "w") as f:
+        json.dump(s, f)
+    cav = {"family": "backdoor", "regions": [], "needs_input": "none"}
+    cav.update(cav_extra)
+    with open(os.path.join(case.dir, "kadath", "cavern.json"), "w") as f:
+        json.dump(cav, f)
+    client = FakeClient(dict(GOOD_VERDICT, coverage=model_coverage),
+                        ["# R\n=====DRAFT.YAR=====\nrule k { strings: $a = \"zz\" condition: $a }\n"])
+    return po.run(case, {"case_id": "FIO-7"}, client, str(root), PROMPTS, [str(eng)]), client
+
+
+def test_run_coverage_stubbed_and_cavern_floor(tmp_path, monkeypatch):
+    stubs = [{"path": "/samples/webroot/functions/functions.php", "kind": "include", "round": 1}]
+    v, client = _run_with_meta(tmp_path, monkeypatch, {"stubs": stubs, "fatal": False}, {"verdict": "red"})
+    assert v["coverage"] == "stubbed" and v["stubs"] == stubs and v["cavern_verdict"] == "red"
+    assert "dependency_stubs=1" in client.calls[0][0][1]["content"]
+    # engine-reported fatal wins over the model's coverage claim
+    v, _ = _run_with_meta(tmp_path, monkeypatch, {"stubs": stubs, "fatal": True}, {"verdict": "amber"})
+    assert v["coverage"] == "errored"
+    # a password gate beats stubbing
+    v, _ = _run_with_meta(tmp_path, monkeypatch, {"stubs": stubs, "fatal": False},
+                          {"verdict": "green", "needs_input": "password"})
+    assert v["coverage"] == "unauthenticated"
+
+
+def test_run_cavern_verdict_is_a_floor(tmp_path, monkeypatch):
+    # deterministic green (fixture has an admin user -> red), so make the model green and cavern amber:
+    # the fixture's deterministic red wins regardless; test the cavern floor via final_verdict directly
+    # and via a green-deterministic summary here
+    case, root, eng = _setup(tmp_path)
+    monkeypatch.setattr(po, "flow_bodies", lambda root, epoch: ([], None))
+    run_dir = os.path.join(str(root), "reports", "FIO-7-x")
+    with open(os.path.join(run_dir, "summary.json")) as f:
+        s = json.load(f)
+    s["db_diff"]["users_added"] = []
+    s["run"].update({"stubs": [], "fatal": False})
+    with open(os.path.join(run_dir, "summary.json"), "w") as f:
+        json.dump(s, f)
+    with open(os.path.join(case.dir, "kadath", "cavern.json"), "w") as f:
+        json.dump({"verdict": "amber", "family": "phishing", "regions": [], "needs_input": "none"}, f)
+    client = FakeClient(dict(GOOD_VERDICT, verdict="green"),
+                        ["# R\n=====DRAFT.YAR=====\nrule k { strings: $a = \"zz\" condition: $a }\n"])
+    v = po.run(case, {"case_id": "FIO-7"}, client, str(root), PROMPTS, [str(eng)])
+    assert v["deterministic"]["level"] == "green" and v["model_verdict"] == "green"
+    assert v["verdict"] == "amber" and v["decided_by"] == "cavern"
+
+
+def test_run_engine_passes_stub_flag(tmp_path):
+    ok = tmp_path / "ok.sh"
+    ok.write_text("#!/bin/sh\necho \"$@\" >&2\necho /tmp/run/summary.json\n")
+    ok.chmod(0o755)
+    import subprocess as sp
+    p = sp.run([str(ok), "/x.php", "--json", "--slug", "S", "--skip-selftest", "--stub-missing"], capture_output=True, text=True)
+    assert "--stub-missing" in p.stderr
+    assert po.run_engine([str(ok)], "/x.php", "FIO-1", str(tmp_path)) == "/tmp/run/summary.json"

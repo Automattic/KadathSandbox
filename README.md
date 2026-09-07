@@ -75,7 +75,14 @@ For a scripted run without an agent:
 
     make offer SAMPLE=path/to/sample.php
     # or, with options:
-    python3 bin/kadath offer path/to/sample.php [--recipe r.kadath] [--reset] [--json]
+    python3 bin/kadath offer path/to/sample.php [--recipe r.kadath] [--reset] [--json] [--stub-missing]
+
+`--stub-missing` is for a single file lifted out of a kit: when PHP reports a
+missing include or an undefined function, the engine writes an empty stand-in
+under `samples/webroot/` (functions return `null`) and triggers again, up to
+three rounds, so the sample gets past its first `require`. What was stubbed is
+recorded in `summary.json` under `run.stubs`, and `run.fatal` says whether a
+fatal survived the last round.
 
 It brings the stack up, runs the self-test gate once per build, isolates any
 prior sample, stages and triggers this one by type, snapshots, and writes
@@ -127,6 +134,11 @@ Three passes, each resumable from `kadath-triage.csv`:
    The deterministic verdict travels with it: the model can argue, but never
    lowers it — the higher of the two wins, and any disagreement sends the case
    to the Deep Scrying.
+   The Offering runs with `--stub-missing`, and the final verdict is the highest
+   of the Cavern's, the deterministic, and the model's. A run whose `coverage`
+   is not `full` — `stubbed` (ran against empty stand-ins), `unauthenticated`
+   (never got its password), `errored` (fataled) — can never settle a case:
+   runtime silence is not evidence there, so it goes to the Scry.
 3. **Scry** — ambers, low-confidence reds, and every disagreement get an agentic
    re-examination with read-only tools; every claim must quote a tool result
    verbatim or it is dropped, and it never lowers a deterministic verdict.

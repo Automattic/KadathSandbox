@@ -9,7 +9,7 @@ PROMPTS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 def _good(**kw):
     o = {"verdict": "red", "confidence": 0.9, "family": "webshell", "host_code": "none",
          "regions": [{"start_line": 1, "end_line": 2, "why": "eval"}], "runnable": True,
-         "needs_input": "post-body", "worthy": False, "reason": "eval of POST"}
+         "needs_input": "post-body", "worthy": False, "missing_deps": [], "reason": "eval of POST"}
     o.update(kw)
     return o
 
@@ -112,3 +112,18 @@ def test_run_rejects_region_out_of_range(tmp_path):
     case = library.walk(str(tmp_path))[0]
     with pytest.raises(ValueError):
         cavern.run(case, FakeClient(_good(regions=[{"start_line": 1, "end_line": 50, "why": "x"}])), PROMPTS)
+
+
+def test_schema_missing_deps_and_phishing_family():
+    cavern.validate(_good(family="phishing", missing_deps=[{"path": "signin.php", "kind": "redirect"}]), 5)
+    with pytest.raises(ValueError):
+        cavern.validate(_good(missing_deps=[{"path": "x.php", "kind": "dll"}]), 5)
+    with pytest.raises(ValueError):
+        o = _good()
+        del o["missing_deps"]
+        cavern.validate(o, 5)
+
+
+def test_prompt_carries_judgment_rules():
+    text, _ = cavern.load_prompt(PROMPTS, "cavern")
+    assert "Data is not code" in text and "hinges on a missing file" in text and "missing_deps" in text

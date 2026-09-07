@@ -26,7 +26,7 @@ def _mark(text):
 
 def cavern(mark):
     base = {"confidence": 0.95, "host_code": "none", "regions": [{"start_line": 1, "end_line": 1, "why": "x"}],
-            "runnable": True, "needs_input": "none", "reason": "fixture"}
+            "runnable": True, "needs_input": "none", "missing_deps": [], "reason": "fixture"}
     return dict(base, **{
         "MARK_RED_ONE": {"verdict": "red", "family": "webshell", "worthy": False},
         "MARK_RED_WORTHY": {"verdict": "red", "family": "backdoor", "worthy": True},

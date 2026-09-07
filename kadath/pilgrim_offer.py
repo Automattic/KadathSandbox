@@ -24,7 +24,7 @@ VERDICT_SCHEMA = {
     "properties": {
         "verdict": {"type": "string", "enum": ["red", "amber", "green"]},
         "confidence": {"type": "number", "minimum": 0, "maximum": 1},
-        "coverage": {"type": "string", "enum": ["full", "unauthenticated", "errored"]},
+        "coverage": {"type": "string", "enum": ["full", "unauthenticated", "stubbed", "errored"]},
         "iocs_extra": {"type": "array", "items": {
             "type": "object", "required": ["type", "value"],
             "properties": {"type": {"type": "string", "enum": IOC_TYPES},
@@ -43,13 +43,20 @@ class EngineError(RuntimeError):
         self.stderr = stderr
 
 
-def final_verdict(det_level, model_level):
-    """max on red > amber > green; who won is recorded, a disagreement is
-    routed to the Deep Scrying by the orchestrator, never downgraded here."""
-    if det_level == model_level:
+def final_verdict(det_level, model_level, cavern_level=None):
+    """max on red > amber > green over the deterministic, model, and (when
+    given) Cavern verdicts; who won is recorded, ties going to the evidence
+    (deterministic, then Cavern, then model). A disagreement is routed to the
+    Deep Scrying by the orchestrator, never downgraded here."""
+    levels = {"deterministic": det_level, "model": model_level}
+    if cavern_level is not None:
+        levels["cavern"] = cavern_level
+    if len(set(levels.values())) == 1:
         return det_level, "agree"
-    higher = det_level if ORDER[det_level] > ORDER[model_level] else model_level
-    return higher, ("deterministic" if higher == det_level else "model")
+    top = max(ORDER[v] for v in levels.values())
+    for who in ("deterministic", "cavern", "model"):
+        if who in levels and ORDER[levels[who]] == top:
+            return levels[who], who
 
 
 def check_yara(text):
@@ -66,7 +73,7 @@ def split_report(text):
 
 
 def run_engine(engine_cmd, php, slug, cwd, timeout=600):
-    p = subprocess.run(list(engine_cmd) + [php, "--json", "--slug", slug, "--skip-selftest"],
+    p = subprocess.run(list(engine_cmd) + [php, "--json", "--slug", slug, "--skip-selftest", "--stub-missing"],
                        cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                        timeout=timeout)
     if p.returncode != 0:
@@ -138,9 +145,12 @@ def evidence_pack(summary, cav, det, trace_text, bodies):
     parts = [UNTRUSTED_PREAMBLE,
              _fence("DETERMINISTIC VERDICT", json.dumps(det), "json"),
              _fence("STATIC JUDGMENT (Cavern)", json.dumps(
-                 {"family": cav.get("family"), "regions": cav.get("regions"),
-                  "needs_input": cav.get("needs_input")}), "json"),
+                 {"verdict": cav.get("verdict"), "family": cav.get("family"),
+                  "regions": cav.get("regions"), "needs_input": cav.get("needs_input"),
+                  "missing_deps": cav.get("missing_deps", [])}), "json"),
              _fence("SAMPLE", json.dumps(summary.get("sample", {})), "json"),
+             _fence("DEPENDENCY STUBS (empty stand-ins created so the sample could run)",
+                    json.dumps(summary.get("run", {}).get("stubs", [])), "json"),
              _fence("DB DIFF", json.dumps(summary.get("db_diff", {}), indent=1), "json"),
              _fence("DANGEROUS CALLS REACHED", json.dumps(summary.get("dangerous_calls", [])), "json"),
              _fence("FILES WRITTEN", json.dumps(summary.get("files_written", [])), "json"),
@@ -185,22 +195,32 @@ def run(case, row, client, root, prompts_dir, engine_cmd):
                    "db_diff": summ.get("db_diff"), "deterministic": det,
                    "flow_bodies_error": flow_bodies_error}, f, indent=1)
 
-    hint = f"\nCavern needs_input={cav.get('needs_input', 'unknown')}; php_fatal={_fatal_in_run(run_dir)}\n"
+    run_meta = summ.get("run", {})
+    fatal = run_meta["fatal"] if "fatal" in run_meta else _fatal_in_run(run_dir)
+    stubs_made = run_meta.get("stubs", []) or []
+    hint = (f"\nCavern verdict={cav.get('verdict', 'unknown')} needs_input={cav.get('needs_input', 'unknown')}; "
+            f"php_fatal={fatal}; dependency_stubs={len(stubs_made)}\n")
     sys_v, sha_v = load_prompt(prompts_dir, "offer_verdict")
     r1 = client.chat([{"role": "system", "content": sys_v},
                       {"role": "user", "content": pack + hint + "\nReply with the verdict JSON only."}],
                      profile="offer", json_schema=VERDICT_SCHEMA, think=False,
                      validate=lambda o: llm.validate_against(VERDICT_SCHEMA, o))
     mv = r1["parsed"]
+    # coverage: a fatal beats everything; a sample that never got its password
+    # ran only its idle path; a sample that ran against empty stand-ins is
+    # "stubbed" — none of these can settle a case (the orchestrator checks)
     coverage = mv["coverage"]
-    if _fatal_in_run(run_dir):
+    if fatal:
         coverage = "errored"
-    elif cav.get("needs_input", "none") not in ("none",) and coverage == "full":
+    elif cav.get("needs_input", "none") not in ("none",) and coverage in ("full", "stubbed"):
         coverage = "unauthenticated"
-    level, decided_by = final_verdict(det["level"], mv["verdict"])
+    elif stubs_made and coverage == "full":
+        coverage = "stubbed"
+    level, decided_by = final_verdict(det["level"], mv["verdict"], cav.get("verdict"))
 
     sys_r, sha_r = load_prompt(prompts_dir, "offer_report")
-    verdict_note = f"\nRecorded verdict: {level} (deterministic {det['level']}, model {mv['verdict']}); coverage {coverage}; case_id {case.id}\n"
+    verdict_note = (f"\nRecorded verdict: {level} (deterministic {det['level']}, model {mv['verdict']}, "
+                    f"cavern {cav.get('verdict', 'n/a')}); coverage {coverage}; case_id {case.id}\n")
     yara_status = "ok"
     msgs = [{"role": "system", "content": sys_r}, {"role": "user", "content": pack + verdict_note}]
     report_md = None
@@ -236,7 +256,8 @@ def run(case, row, client, root, prompts_dir, engine_cmd):
     summary_mod.validate_iocs(iocs)
 
     out = {"verdict": level, "decided_by": decided_by, "confidence": mv["confidence"],
-           "deterministic": det, "model_verdict": mv["verdict"], "coverage": coverage,
+           "deterministic": det, "model_verdict": mv["verdict"], "cavern_verdict": cav.get("verdict"),
+           "coverage": coverage, "stubs": stubs_made,
            "iocs_extra": mv["iocs_extra"], "persistence": mv["persistence"], "reason": mv["reason"],
            "yara": yara_status, "run_dir": run_dir, "model": client.model,
            "sampling": dict(client.profiles["offer"]),

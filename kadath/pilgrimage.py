@@ -97,9 +97,11 @@ def _case_by_id(cases):
 
 
 def _settled(v):
-    """True when an Offering verdict needs no Deep Scrying: the two sides agreed
-    and it is green, or agreed on red with confidence >= 0.6."""
-    if v.get("decided_by") != "agree":
+    """True when an Offering verdict needs no Deep Scrying: every side agreed,
+    the detonation exercised the sample (coverage full), and it is green or a
+    red with confidence >= 0.6. A stubbed, unauthenticated, or errored run
+    cannot settle anything — runtime silence is not evidence there."""
+    if v.get("decided_by") != "agree" or v.get("coverage", "full") != "full":
         return False
     return v["verdict"] == "green" or (v["verdict"] == "red" and v.get("confidence", 0) >= 0.6)
 

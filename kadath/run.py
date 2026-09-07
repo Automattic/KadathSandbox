@@ -14,6 +14,7 @@ import subprocess
 import sys
 import time
 from datetime import datetime, timezone
+from kadath import stubs
 
 # Artifact file types worth compressing in a run bundle. Xdebug traces are the
 # bulk (a page view is ~200 MB of tab-separated text, ~16x smaller gzipped); the
@@ -212,6 +213,8 @@ def offer(argv):
     ap.add_argument("--skip-selftest", action="store_true")
     ap.add_argument("--keep-active", action="store_true")
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--stub-missing", action="store_true",
+                    help="stub missing includes/functions PHP reports and trigger again (up to 3 rounds)")
     a = ap.parse_args(argv)
 
     # detect
@@ -270,6 +273,16 @@ def offer(argv):
         if det.type == "zip":
             det = detect.Detected(_type_from_staged(staged, ROOT), det.slug,
                                   os.path.relpath(staged, ROOT))
+        # a single file lifted out of a kit dies on its first require; stub the
+        # literal includes up front, then let PHP name the rest after the trigger
+        made_stubs = []
+        if a.stub_missing and os.path.isfile(staged):
+            staged_dir = os.path.dirname(staged)
+            with open(staged, "r", errors="replace") as f:
+                for rel in stubs.static_includes(f.read()):
+                    hp = stubs.host_path("/" + os.path.relpath(os.path.join(staged_dir, rel), ROOT), ROOT)
+                    if hp and stubs.write_stub(hp):
+                        made_stubs.append({"path": "/" + os.path.relpath(hp, ROOT), "kind": "include", "round": 0})
         sh(["docker", "compose", "up", "-d", "--force-recreate", "--wait", "wordpress"], cwd=ROOT)
 
         # activation for plugin/theme (state change; wrapper keeps it untraced)
@@ -287,6 +300,8 @@ def offer(argv):
         sha256, md5 = _hash_sample(a.sample)
         dns_off = os.path.getsize(os.path.join(ROOT, "artifacts/dns/dns.log")) if os.path.exists(os.path.join(ROOT, "artifacts/dns/dns.log")) else 0
         drop_off = os.path.getsize(os.path.join(ROOT, "artifacts/dropped.log")) if os.path.exists(os.path.join(ROOT, "artifacts/dropped.log")) else 0
+        err_log = os.path.join(ROOT, "artifacts/php/php-error.log")
+        err_off = os.path.getsize(err_log) if os.path.exists(err_log) else 0
         before = _dbstate()
 
         # trigger
@@ -305,6 +320,14 @@ def offer(argv):
             actions = trigger.default_actions(det)
         trigger.execute(session, actions)
         time.sleep(3)
+        if a.stub_missing:
+            def _retrigger():
+                trigger.execute(session, actions)
+                time.sleep(3)
+            made, fatal = stubs.stub_rounds(ROOT, err_log, err_off, _retrigger)
+            made_stubs.extend(made)
+        else:
+            fatal = any("PHP Fatal error" in l for l in stubs.new_lines(err_log, err_off))
 
         # collect
         after = _dbstate()
@@ -328,7 +351,8 @@ def offer(argv):
                        "size_bytes": os.path.getsize(a.sample) if os.path.isfile(a.sample) else 0,
                        "type": det.type}
         run_meta = {"epoch": epoch, "utc": iso, "slug": det.slug,
-                    "trigger_actions": session.actions, "reset": a.reset}
+                    "trigger_actions": session.actions, "reset": a.reset,
+                    "stubs": made_stubs, "fatal": fatal}
         creds = _credentials_from_trace(traces)
         s = summary.build_summary(
             sample_meta, run_meta, db_diff, traceparse.callchain(traces),

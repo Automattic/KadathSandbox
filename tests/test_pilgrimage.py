@@ -271,3 +271,11 @@ def test_main_warns_on_unknown_case(tmp_path, monkeypatch, capsys):
     rc = pilgrimage.main([str(lib), "--pass", "cavern", "--case", "A", "--case", "NOPE", "--no-stack"])
     assert rc == 0
     assert "warning: case(s) not in library: NOPE" in capsys.readouterr().err
+
+
+def test_settled_requires_full_coverage():
+    base = {"decided_by": "agree", "verdict": "green", "confidence": 0.9}
+    assert pilgrimage._settled(dict(base, coverage="full"))
+    for cov in ("stubbed", "unauthenticated", "errored"):
+        assert not pilgrimage._settled(dict(base, coverage=cov))
+    assert not pilgrimage._settled(dict(base, verdict="red", coverage="stubbed"))
