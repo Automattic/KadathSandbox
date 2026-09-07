@@ -75,7 +75,7 @@ For a scripted run without an agent:
 
     make offer SAMPLE=path/to/sample.php
     # or, with options:
-    python3 bin/kadath offer path/to/sample.php [--recipe r.kadath] [--reset] [--json] [--stub-missing]
+    python3 bin/kadath offer path/to/sample.php [--recipe r.kadath] [--reset] [--json] [--stub-missing] [--adopt-wp]
 
 `--stub-missing` is for a single file lifted out of a kit: when PHP reports a
 missing include or an undefined function, the engine writes an empty stand-in
@@ -83,6 +83,15 @@ under `samples/webroot/` (functions return `null`) and triggers again, up to
 three rounds, so the sample gets past its first `require`. What was stubbed is
 recorded in `summary.json` under `run.stubs`, and `run.fatal` says whether a
 fatal survived the last round.
+
+`--adopt-wp` is for a file lifted out of a plugin or theme: as a bare webshell
+it dies on its first `add_action()` because WordPress is not loaded. Adopted, it
+is wrapped as a synthetic plugin (`Plugin Name: kadath-adopted <slug>`) with an
+empty shims file loaded before it, staged under `samples/plugins/`, and
+activated — WordPress functions and classes exist, its hooks fire on `GET /`,
+and shims for non-core helpers it still misses go into the shims file.
+`run.adopted` records it. The pilgrimage passes both flags, adopting whenever
+the source references WordPress APIs.
 
 It brings the stack up, runs the self-test gate once per build, isolates any
 prior sample, stages and triggers this one by type, snapshots, and writes

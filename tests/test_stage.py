@@ -93,3 +93,20 @@ def test_clear_run_artifacts_keeps_logs_and_gitkeep(tmp_path):
     assert (root / "artifacts" / "xdebug" / ".gitkeep").exists()
     assert (root / "artifacts" / "dns" / "dns.log").exists()      # untouched
     assert (root / "artifacts" / "pcap" / "s.pcap00").exists()    # untouched
+
+
+def test_adopt_wraps_loose_file_as_plugin(tmp_path):
+    src = tmp_path / "1.php"
+    src.write_text("<?php\nadd_action('init', 'x');\n")
+    d = stage.adopt(str(tmp_path), str(src), "FIO-1")
+    assert d == os.path.join(str(tmp_path), ".kadath", "adopt", "FIO-1")
+    wrapper = open(os.path.join(d, stage.ADOPT_WRAPPER)).read()
+    assert "Plugin Name: kadath-adopted FIO-1" in wrapper
+    assert wrapper.index("kadath-shims.php") < wrapper.index("'/1.php'")
+    assert open(os.path.join(d, stage.ADOPT_SHIMS)).read().startswith("<?php")
+    assert open(os.path.join(d, "1.php")).read() == src.read_text()
+    assert detect.detect(d).type == "plugin"
+    # re-adopting replaces the directory cleanly
+    (tmp_path / ".kadath" / "adopt" / "FIO-1" / "stale").write_text("x")
+    stage.adopt(str(tmp_path), str(src), "FIO-1")
+    assert not os.path.exists(os.path.join(d, "stale"))

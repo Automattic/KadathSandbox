@@ -112,3 +112,30 @@ def test_preflight(monkeypatch):
     monkeypatch.setattr(llm, "_get", lambda url, timeout: {"models": [{"name": "other"}]})
     with pytest.raises(llm.LLMError):
         llm.Client("http://x:1", "m").preflight()
+
+
+def test_post_retries_once_on_connection_error(monkeypatch):
+    import urllib.error
+    calls = []
+
+    class R:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def read(self): return b'{"message": {"role": "assistant", "content": "ok"}}'
+
+    def urlopen(req, timeout):
+        calls.append(1)
+        if len(calls) == 1:
+            raise urllib.error.URLError("remote end closed")
+        return R()
+    monkeypatch.setattr(llm.urllib.request, "urlopen", urlopen)
+    assert llm._post("http://x/api/chat", {}, 5)["message"]["content"] == "ok" and len(calls) == 2
+    calls.clear()
+
+    def always_fail(req, timeout):
+        calls.append(1)
+        raise urllib.error.URLError("down")
+    monkeypatch.setattr(llm.urllib.request, "urlopen", always_fail)
+    with pytest.raises(llm.LLMError):
+        llm._post("http://x/api/chat", {}, 5)
+    assert len(calls) == 2

@@ -11,4 +11,6 @@ Rules of evidence:
 - `iocs_extra`: indicators the deterministic pass missed, each with `type` from the allowed list, the literal `value`, and `evidence` naming the artifact or file:line. Never invent an indicator that is not in the evidence.
 - `persistence`: how it survives — users, options, cron hooks, dropped files, re-asserting hooks — as short strings.
 
+- A PHP fatal is a property of the case, not of the author's intent: a file lifted out of a plugin that dies on `add_action`, or one missing its `config.php`, says nothing about malice either way. When coverage is `errored` or `stubbed`, do not raise your verdict above the Cavern's on the strength of the crash; raise it only for behaviour the trace, the database, or the network actually recorded.
+
 Reply with the JSON object only.

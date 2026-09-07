@@ -22,6 +22,21 @@ _BLOB = re.compile(r"[A-Za-z0-9+/=]{200,}|(?:\\x[0-9a-fA-F]{2}){20,}")
 _LITERAL = re.compile(r"'([^'\\]|\\.)*'|\"([^\"\\]|\\.)*\"")
 
 
+_WANTS_WP = re.compile(r"(?:\bABSPATH\b|\bWPINC\b|\$wpdb\b|\bWP_[A-Z][A-Za-z_]+|\bwp_[a-z0-9_]+\s*\(|"
+                       r"\badd_(?:action|filter)\s*\(|\bget_option\s*\(|\bget_template_directory|wp-load\.php)")
+
+
+def wants_wordpress(path):
+    """True when a loose PHP file expects WordPress to be loaded beneath it —
+    it should be offered adopted as a plugin rather than as a bare webshell."""
+    try:
+        with open(path, "rb") as f:
+            text = f.read().decode("utf-8", errors="replace")
+    except OSError:
+        return False
+    return bool(_WANTS_WP.search(text))
+
+
 def walk(library_dir):
     out = []
     for name in sorted(os.listdir(library_dir)):

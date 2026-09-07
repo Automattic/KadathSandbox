@@ -215,6 +215,8 @@ def offer(argv):
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--stub-missing", action="store_true",
                     help="stub missing includes/functions PHP reports and trigger again (up to 3 rounds)")
+    ap.add_argument("--adopt-wp", action="store_true",
+                    help="offer a loose .php that expects WordPress as a synthetic plugin instead of a bare webshell")
     a = ap.parse_args(argv)
 
     # detect
@@ -269,18 +271,31 @@ def offer(argv):
         elif not a.keep_active:
             stage.isolate(ROOT, lambda args: _wp(["--skip-plugins"] + args))
 
-        staged = stage.place(ROOT, a.sample, det)
+        # a file lifted out of a plugin/theme dies on add_action() in a bare
+        # webroot; adopt it as a plugin so WordPress is loaded beneath it
+        adopted = False
+        stage_src = a.sample
+        if a.adopt_wp and det.type == "webshell":
+            stage_src = stage.adopt(ROOT, a.sample, det.slug)
+            det = detect.Detected("plugin", det.slug, f"samples/plugins/{det.slug}")
+            adopted = True
+        staged = stage.place(ROOT, stage_src, det)
         if det.type == "zip":
             det = detect.Detected(_type_from_staged(staged, ROOT), det.slug,
                                   os.path.relpath(staged, ROOT))
         # a single file lifted out of a kit dies on its first require; stub the
         # literal includes up front, then let PHP name the rest after the trigger
         made_stubs, stub_files = [], []
+        scan_file, base_dir = None, None
         if a.stub_missing and os.path.isfile(staged):
-            staged_dir = os.path.dirname(staged)
-            with open(staged, "r", errors="replace") as f:
+            scan_file, base_dir = staged, os.path.dirname(staged)
+        elif a.stub_missing and adopted:
+            scan_file, base_dir = os.path.join(staged, os.path.basename(a.sample)), staged
+            stub_files.append(os.path.join(staged, stage.ADOPT_SHIMS))   # shims load before the sample
+        if scan_file:
+            with open(scan_file, "r", errors="replace") as f:
                 for rel in stubs.static_includes(f.read()):
-                    hp = stubs.host_path("/" + os.path.relpath(os.path.join(staged_dir, rel), ROOT), ROOT)
+                    hp = stubs.host_path("/" + os.path.relpath(os.path.join(base_dir, rel), ROOT), ROOT)
                     if hp and stubs.write_stub(hp):
                         stub_files.append(hp)
                         made_stubs.append({"path": "/" + os.path.relpath(hp, ROOT), "kind": "include", "round": 0})
@@ -354,7 +369,7 @@ def offer(argv):
                        "type": det.type}
         run_meta = {"epoch": epoch, "utc": iso, "slug": det.slug,
                     "trigger_actions": session.actions, "reset": a.reset,
-                    "stubs": made_stubs, "fatal": fatal}
+                    "stubs": made_stubs, "fatal": fatal, "adopted": adopted}
         creds = _credentials_from_trace(traces)
         s = summary.build_summary(
             sample_meta, run_meta, db_diff, traceparse.callchain(traces),

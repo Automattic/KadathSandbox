@@ -46,6 +46,30 @@ def clear_run_artifacts(root):
                 pass
 
 
+ADOPT_WRAPPER = "kadath-wrapper.php"
+ADOPT_SHIMS = "kadath-shims.php"
+
+
+def adopt(root, sample_path, slug):
+    """Wrap a loose PHP file that expects WordPress underneath it as a synthetic
+    plugin: a Plugin Name header, an (initially empty) shims file the Offering
+    can fill, then the sample. Returns the directory to stage as a plugin."""
+    d = os.path.join(root, ".kadath", "adopt", slug)
+    if os.path.isdir(d):
+        shutil.rmtree(d)
+    os.makedirs(d)
+    base = os.path.basename(sample_path)
+    shutil.copy2(sample_path, os.path.join(d, base))
+    with open(os.path.join(d, ADOPT_SHIMS), "w") as f:
+        f.write("<?php // kadath shims: no-op stand-ins for functions and classes the adopted file expects\n")
+    with open(os.path.join(d, ADOPT_WRAPPER), "w") as f:
+        f.write("<?php\n/*\nPlugin Name: kadath-adopted " + slug + "\n"
+                "Description: KadathSandbox wrapper - a loose PHP file adopted as a plugin so WordPress is loaded beneath it.\n*/\n"
+                f"require_once __DIR__ . '/{ADOPT_SHIMS}';\n"
+                f"require_once __DIR__ . '/{base}';\n")
+    return d
+
+
 def isolate(root, wp_exec):
     actions = []
     listing = wp_exec(["plugin", "list", "--field=name", "--status=active"])

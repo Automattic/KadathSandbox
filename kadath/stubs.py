@@ -9,6 +9,7 @@ import re
 _REQUIRED = re.compile(r"Failed opening (?:required )?'(/samples/[^']+)'")
 _INCLUDE_STREAM = re.compile(r"(?:include|require)(?:_once)?\((/samples/[^)]+)\): Failed to open stream")
 _UNDEFINED = re.compile(r"Call to undefined function ([A-Za-z_][A-Za-z0-9_]*)\(\) in /samples/")
+_CLASS = re.compile(r"Class [\"']([A-Za-z_][A-Za-z0-9_]*)[\"'] not found in /samples/")
 # __DIR__ . '/x.php' / dirname(__FILE__) . '/x.php' (leading slash stripped), or a
 # bare relative literal 'x.php'; an unprefixed absolute path is not ours to stub
 _STATIC_INC = re.compile(
@@ -41,6 +42,15 @@ def undefined_functions(lines):
     out = []
     for l in lines:
         m = _UNDEFINED.search(l)
+        if m and m.group(1) not in out:
+            out.append(m.group(1))
+    return out
+
+
+def undefined_classes(lines):
+    out = []
+    for l in lines:
+        m = _CLASS.search(l)
         if m and m.group(1) not in out:
             out.append(m.group(1))
     return out
@@ -95,6 +105,21 @@ def add_shims(path, names):
             existing += f"function {n}("
 
 
+def add_class_shims(path, names):
+    """A catch-all class: any method or property read returns null."""
+    with open(path, "r") as f:
+        existing = f.read()
+    with open(path, "a") as f:
+        for n in names:
+            if not _FUNC_NAME.match(n) or f"class {n} " in existing:
+                continue
+            f.write(f"if (!class_exists('{n}')) {{ class {n} {{ public function __construct(...$a) {{}} "
+                    f"public function __call($n, $a) {{ return null; }} "
+                    f"public static function __callStatic($n, $a) {{ return null; }} "
+                    f"public function __get($n) {{ return null; }} public function __set($n, $v) {{}} }} }}\n")
+            existing += f"class {n} "
+
+
 def stub_rounds(root, err_log, err_off, retrigger, max_rounds=3, stub_files=None):
     """Read the fatals the last trigger produced, stub what is missing, and
     trigger again — up to max_rounds times. stub_files are host paths of stubs
@@ -127,6 +152,12 @@ def stub_rounds(root, err_log, err_off, retrigger, max_rounds=3, stub_files=None
             add_shims(stub_files[0], names)
             for n in names:
                 made.append({"path": n, "kind": "function", "round": rnd})
+            acted = True
+        classes = undefined_classes(lines)
+        if classes and stub_files:
+            add_class_shims(stub_files[0], classes)
+            for n in classes:
+                made.append({"path": n, "kind": "class", "round": rnd})
             acted = True
         if not acted:
             return made, True

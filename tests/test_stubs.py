@@ -155,3 +155,30 @@ def test_write_stub_survives_oserror(tmp_path):
     blocker = tmp_path / "samples"
     blocker.write_text("i am a file, not a directory")
     assert stubs.write_stub(str(blocker / "webroot" / "x.php")) is False
+
+
+FATAL_CLASS = ("[07-Sep-2026 19:52:06 UTC] PHP Fatal error:  Uncaught Error: Class \"WP_Error\" not found "
+               "in /samples/plugins/x/a711.php:413")
+FATAL_CLASS_CORE = ("[07-Sep-2026 19:52:06 UTC] PHP Fatal error:  Uncaught Error: Class 'Foo' not found "
+                    "in /var/www/html/wp-includes/x.php:1")
+
+
+def test_undefined_classes_and_shims(tmp_path):
+    assert stubs.undefined_classes([FATAL_CLASS, FATAL_CLASS_CORE, FATAL_CLASS]) == ["WP_Error"]
+    p = tmp_path / "kadath-shims.php"
+    stubs.write_stub(str(p))
+    stubs.add_class_shims(str(p), ["WP_Error", "Bad\\Ns", "WP_Error"])
+    t = p.read_text()
+    assert t.count("class WP_Error ") == 1 and "Bad" not in t and "__callStatic" in t
+
+
+def test_stub_rounds_shims_classes(tmp_path):
+    root = tmp_path
+    shims = root / "samples" / "plugins" / "x" / "kadath-shims.php"
+    stubs.write_stub(str(shims))
+    log = root / "artifacts" / "php" / "php-error.log"
+    log.parent.mkdir(parents=True)
+    log.write_text(FATAL_CLASS + "\n")
+    made, fatal = stubs.stub_rounds(str(root), str(log), 0, lambda: None, stub_files=[str(shims)])
+    assert made == [{"path": "WP_Error", "kind": "class", "round": 1}] and fatal is False
+    assert "class WP_Error " in shims.read_text()

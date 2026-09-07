@@ -307,3 +307,24 @@ def test_run_engine_passes_stub_flag(tmp_path):
     p = sp.run([str(ok), "/x.php", "--json", "--slug", "S", "--skip-selftest", "--stub-missing"], capture_output=True, text=True)
     assert "--stub-missing" in p.stderr
     assert po.run_engine([str(ok)], "/x.php", "FIO-1", str(tmp_path)) == "/tmp/run/summary.json"
+
+
+def test_run_engine_adopt_flag(tmp_path):
+    ok = tmp_path / "ok.sh"
+    ok.write_text("#!/bin/sh\necho \"$@\" > \"$(dirname \"$0\")/args\"\necho /tmp/run/summary.json\n")
+    ok.chmod(0o755)
+    po.run_engine([str(ok)], "/x.php", "S", str(tmp_path))
+    assert "--adopt-wp" not in (tmp_path / "args").read_text()
+    po.run_engine([str(ok)], "/x.php", "S", str(tmp_path), adopt=True)
+    assert "--adopt-wp" in (tmp_path / "args").read_text()
+
+
+def test_run_adopts_when_sample_wants_wordpress(tmp_path, monkeypatch):
+    case, root, eng = _setup(tmp_path)
+    with open(case.php, "w") as f:
+        f.write("<?php\nadd_action('init', 'x');\n")
+    eng.write_text(f"#!/bin/sh\necho \"$@\" > {root}/args\necho {root}/reports/FIO-7-x/summary.json\n")
+    monkeypatch.setattr(po, "flow_bodies", lambda root, epoch: ([], None))
+    client = FakeClient(GOOD_VERDICT, ["# R\n=====DRAFT.YAR=====\nrule k { strings: $a = \"zz\" condition: $a }\n"])
+    po.run(case, {"case_id": "FIO-7"}, client, str(root), PROMPTS, [str(eng)])
+    assert "--adopt-wp" in (root / "args").read_text()

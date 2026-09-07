@@ -150,3 +150,13 @@ def test_network_needs_url_for_file_readers(tmp_path):
     sock = tmp_path / "sock.php"
     sock.write_text("<?php\n$s = fsockopen('1.2.3.4', 6667);\ncurl_init();\n")
     assert library.static_facts(str(sock))["network"] == ["curl_init", "fsockopen"]
+
+
+def test_wants_wordpress(tmp_path):
+    for body, want in (("<?php add_action('init','f');", True), ("<?php if (!defined('ABSPATH')) exit;", True),
+                       ("<?php global $wpdb; $wpdb->get_var('x');", True), ("<?php new WP_Error('x');", True),
+                       ("<?php eval($_POST['k']);", False), ("<?php echo 'hi';", False)):
+        p = tmp_path / "s.php"
+        p.write_text(body)
+        assert library.wants_wordpress(str(p)) is want, body
+    assert library.wants_wordpress(str(tmp_path / "missing.php")) is False

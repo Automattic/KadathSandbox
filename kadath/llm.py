@@ -99,13 +99,19 @@ def validate_against(schema, obj, path="$"):
 
 
 def _post(url, payload, timeout):
-    req = urllib.request.Request(url, data=json.dumps(payload).encode(),
-                                 headers={"Content-Type": "application/json"})
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            return json.loads(r.read().decode())
-    except (urllib.error.URLError, OSError, ValueError) as e:
-        raise LLMError(f"ollama request failed: {e}") from e
+    data = json.dumps(payload).encode()
+    for attempt in range(2):
+        req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return json.loads(r.read().decode())
+        except (urllib.error.URLError, OSError) as e:
+            # one retry: Ollama drops idle keep-alive connections mid-run
+            if attempt == 0 and not isinstance(e, ValueError):
+                continue
+            raise LLMError(f"ollama request failed: {e}") from e
+        except ValueError as e:
+            raise LLMError(f"ollama request failed: {e}") from e
 
 
 def _get(url, timeout):

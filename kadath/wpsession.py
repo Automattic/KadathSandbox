@@ -3,6 +3,7 @@ over http://127.0.0.1:8088. No third-party deps."""
 import urllib.request
 import urllib.parse
 import urllib.error
+import http.client
 import http.cookiejar
 
 
@@ -25,6 +26,9 @@ class WpSession:
                 return resp.getcode()
         except urllib.error.HTTPError as e:
             return e.code
+        except (urllib.error.URLError, http.client.HTTPException, OSError):
+            # the worker died or hung past its limit: that is a result, not a crash
+            return "connection-failed"
 
     def login(self, user, pw):
         body = urllib.parse.urlencode(

@@ -7,7 +7,7 @@ import os
 import re
 import subprocess
 import sys
-from kadath import cavern, llm, manifest, summary as summary_mod, web_verdict
+from kadath import cavern, library, llm, manifest, summary as summary_mod, web_verdict
 from kadath.cavern import UNTRUSTED_PREAMBLE, load_prompt
 
 ORDER = {"green": 0, "amber": 1, "red": 2}
@@ -72,8 +72,9 @@ def split_report(text):
     return md.strip(), yar.strip()
 
 
-def run_engine(engine_cmd, php, slug, cwd, timeout=600):
-    p = subprocess.run(list(engine_cmd) + [php, "--json", "--slug", slug, "--skip-selftest", "--stub-missing"],
+def run_engine(engine_cmd, php, slug, cwd, timeout=600, adopt=False):
+    args = [php, "--json", "--slug", slug, "--skip-selftest", "--stub-missing"] + (["--adopt-wp"] if adopt else [])
+    p = subprocess.run(list(engine_cmd) + args,
                        cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                        timeout=timeout)
     if p.returncode != 0:
@@ -150,7 +151,8 @@ def evidence_pack(summary, cav, det, trace_text, bodies):
                   "missing_deps": cav.get("missing_deps", [])}), "json"),
              _fence("SAMPLE", json.dumps(summary.get("sample", {})), "json"),
              _fence("DEPENDENCY STUBS (empty stand-ins created so the sample could run)",
-                    json.dumps(summary.get("run", {}).get("stubs", [])), "json"),
+                    json.dumps({"adopted_as_plugin": summary.get("run", {}).get("adopted", False),
+                                "stubs": summary.get("run", {}).get("stubs", [])}), "json"),
              _fence("DB DIFF", json.dumps(summary.get("db_diff", {}), indent=1), "json"),
              _fence("DANGEROUS CALLS REACHED", json.dumps(summary.get("dangerous_calls", [])), "json"),
              _fence("FILES WRITTEN", json.dumps(summary.get("files_written", [])), "json"),
@@ -178,7 +180,7 @@ def run(case, row, client, root, prompts_dir, engine_cmd):
     os.makedirs(kd, exist_ok=True)
     with open(os.path.join(kd, "cavern.json")) as f:
         cav = json.load(f)
-    summary_path = run_engine(engine_cmd, case.php, case.id, root)
+    summary_path = run_engine(engine_cmd, case.php, case.id, root, adopt=library.wants_wordpress(case.php))
     run_dir = os.path.dirname(summary_path)
     with open(summary_path) as f:
         summ = json.load(f)
@@ -199,7 +201,8 @@ def run(case, row, client, root, prompts_dir, engine_cmd):
     fatal = run_meta["fatal"] if "fatal" in run_meta else _fatal_in_run(run_dir)
     stubs_made = run_meta.get("stubs", []) or []
     hint = (f"\nCavern verdict={cav.get('verdict', 'unknown')} needs_input={cav.get('needs_input', 'unknown')}; "
-            f"php_fatal={fatal}; dependency_stubs={len(stubs_made)}\n")
+            f"php_fatal={fatal}; dependency_stubs={len(stubs_made)}; "
+            f"adopted_as_plugin={run_meta.get('adopted', False)}\n")
     sys_v, sha_v = load_prompt(prompts_dir, "offer_verdict")
     r1 = client.chat([{"role": "system", "content": sys_v},
                       {"role": "user", "content": pack + hint + "\nReply with the verdict JSON only."}],
@@ -257,7 +260,7 @@ def run(case, row, client, root, prompts_dir, engine_cmd):
 
     out = {"verdict": level, "decided_by": decided_by, "confidence": mv["confidence"],
            "deterministic": det, "model_verdict": mv["verdict"], "cavern_verdict": cav.get("verdict"),
-           "coverage": coverage, "stubs": stubs_made,
+           "coverage": coverage, "stubs": stubs_made, "adopted": run_meta.get("adopted", False),
            "iocs_extra": mv["iocs_extra"], "persistence": mv["persistence"], "reason": mv["reason"],
            "yara": yara_status, "run_dir": run_dir, "model": client.model,
            "sampling": dict(client.profiles["offer"]),

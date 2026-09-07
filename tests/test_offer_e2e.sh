@@ -41,6 +41,15 @@ ck "stubs: example.com reached after stubs" 'python3 -c "import json;s=json.load
 RUN4=$(python3 bin/kadath offer tests/needs_dep.php --json)
 ck "no stubs: fatal recorded"              'python3 -c "import json;s=json.load(open(\"'"$RUN4"'\"));import sys;sys.exit(0 if s[\"run\"][\"fatal\"] is True and s[\"run\"][\"stubs\"]==[] else 1)"'
 
+# 2c. a file lifted out of a plugin: adopted, WordPress beneath it, hook fires
+RUN5=$(python3 bin/kadath offer tests/needs_wp.php --json --stub-missing --adopt-wp)
+echo "needs_wp summary: $RUN5"
+ck "adopt: recorded"                       'python3 -c "import json;s=json.load(open(\"'"$RUN5"'\"));import sys;sys.exit(0 if s[\"run\"][\"adopted\"] is True else 1)"'
+ck "adopt: no fatal"                       'python3 -c "import json;s=json.load(open(\"'"$RUN5"'\"));import sys;sys.exit(0 if s[\"run\"][\"fatal\"] is False else 1)"'
+ck "adopt: init hook fired (option added)" 'python3 -c "import json;s=json.load(open(\"'"$RUN5"'\"));import sys;sys.exit(0 if any(o[\"name\"]==\"kadath_adopted_probe\" for o in s[\"db_diff\"][\"options_added\"]) else 1)"'
+RUN6=$(python3 bin/kadath offer tests/needs_wp.php --json)
+ck "no adopt: fatal on add_action"         'python3 -c "import json;s=json.load(open(\"'"$RUN6"'\"));import sys;sys.exit(0 if s[\"run\"][\"fatal\"] is True else 1)"'
+
 # 3. lock is released (a second run must succeed)
 python3 bin/kadath offer tests/probe.php --json >/dev/null 2>&1
 ck "lock released between runs" '[ $? -eq 0 ]'
