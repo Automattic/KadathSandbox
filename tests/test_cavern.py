@@ -132,3 +132,8 @@ def test_prompt_carries_judgment_rules():
 def test_prompt_names_seo_clients_as_spam():
     text, _ = cavern.load_prompt(PROMPTS, "cavern")
     assert "SAPE" in text and "`spam-seo` and `red`" in text
+
+
+def test_prompt_makes_defacements_red():
+    text, _ = cavern.load_prompt(PROMPTS, "cavern")
+    assert "A defacement is `red`, not `green`" in text

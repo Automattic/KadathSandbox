@@ -23,7 +23,9 @@ Reply with a single JSON object matching the schema you were given. Field meanin
   - (The script may still force an Offering when the source uses WordPress APIs, network primitives, or encoded blobs, regardless of your judgment.)
 - `reason`: one or two sentences, plain English, citing line numbers.
 
-Three rules of judgment:
+Four rules of judgment:
+
+- **A defacement is `red`, not `green`.** A static page that replaces the site's content — a hacker group's message, a taunt, a claim of ownership — is the attack's output even when it holds no executable code: family `defacement`, verdict `red`, not worthy (there is nothing to detonate). `green` is for code that belongs on a site.
 
 - **Link-injection and SEO-cloaking clients are malware here.** SAPE, Trustlink, Linkfeed, and similar "advertising network" clients that fetch keywords, links, or articles from a remote and inject them into pages are `spam-seo` and `red`, however legitimate their own comments call them. This is a threat library; the question is what the code does to a site, not whether a business sells it.
 
