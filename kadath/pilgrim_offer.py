@@ -122,7 +122,9 @@ def flow_bodies(root, epoch, timeout=120):
         return []
 
 
-def _fence(title, body):
+def _fence(title, body, lang=""):
+    if lang:
+        return f"\n=== {title} ===\n```{lang}\n{body}\n```\n"
     return f"\n=== {title} ===\n{body}\n"
 
 
@@ -131,18 +133,18 @@ def evidence_pack(summary, cav, det, trace_text, bodies):
     non_core = {"flows": [f for f in net.get("flows", []) if not f.get("wp_core")],
                 "dns": net.get("dns", []), "dropped": net.get("dropped", [])}
     parts = [UNTRUSTED_PREAMBLE,
-             _fence("DETERMINISTIC VERDICT", json.dumps(det)),
+             _fence("DETERMINISTIC VERDICT", json.dumps(det), "json"),
              _fence("STATIC JUDGMENT (Cavern)", json.dumps(
                  {"family": cav.get("family"), "regions": cav.get("regions"),
-                  "needs_input": cav.get("needs_input")})),
-             _fence("SAMPLE", json.dumps(summary.get("sample", {}))),
-             _fence("DB DIFF", json.dumps(summary.get("db_diff", {}), indent=1)),
-             _fence("DANGEROUS CALLS REACHED", json.dumps(summary.get("dangerous_calls", []))),
-             _fence("FILES WRITTEN", json.dumps(summary.get("files_written", []))),
-             _fence("NETWORK (non-core)", json.dumps(non_core, indent=1)),
-             _fence("WARNINGS", json.dumps(summary.get("warnings", []))),
-             _fence("TRACE EXCERPT (sample frames ±3)", "```\n" + (trace_text or "(no trace)") + "\n```"),
-             _fence("FLOW BODIES (non-core, 4KB cap)", json.dumps(bodies, indent=1))]
+                  "needs_input": cav.get("needs_input")}), "json"),
+             _fence("SAMPLE", json.dumps(summary.get("sample", {})), "json"),
+             _fence("DB DIFF", json.dumps(summary.get("db_diff", {}), indent=1), "json"),
+             _fence("DANGEROUS CALLS REACHED", json.dumps(summary.get("dangerous_calls", [])), "json"),
+             _fence("FILES WRITTEN", json.dumps(summary.get("files_written", [])), "json"),
+             _fence("NETWORK (non-core)", json.dumps(non_core, indent=1), "json"),
+             _fence("WARNINGS", json.dumps(summary.get("warnings", [])), "json"),
+             _fence("TRACE EXCERPT (sample frames ±3)", trace_text or "(no trace)", "text"),
+             _fence("FLOW BODIES (non-core, 4KB cap)", json.dumps(bodies, indent=1), "json")]
     return "".join(parts)
 
 
@@ -197,9 +199,24 @@ def run(case, row, client, root, prompts_dir, engine_cmd):
     verdict_note = f"\nRecorded verdict: {level} (deterministic {det['level']}, model {mv['verdict']}); coverage {coverage}; case_id {case.id}\n"
     yara_status = "ok"
     msgs = [{"role": "system", "content": sys_r}, {"role": "user", "content": pack + verdict_note}]
+    report_md = None
+    yara = None
     for attempt in range(2):
         r2 = client.chat(msgs, profile="offer", think=False)
-        report_md, yara = split_report(r2["content"])
+        try:
+            report_md, yara = split_report(r2["content"])
+        except ValueError:
+            if attempt == 0:
+                # First attempt: send corrective message and retry
+                msgs = r2["messages"] + [{"role": "user", "content":
+                                         "Your reply lacked the required `=====DRAFT.YAR=====` separator line; reply again with report.md, then that exact line, then the YARA rule."}]
+                continue
+            else:
+                # Second attempt still lacks marker: degrade
+                report_md = r2["content"]
+                yara = "// no rule produced: model reply lacked the =====DRAFT.YAR===== marker"
+                yara_status = "needs-review"
+                break
         bad = check_yara(yara)
         if not bad:
             break

@@ -61,6 +61,18 @@ def test_evidence_pack_contents():
     for needle in ("DETERMINISTIC VERDICT", "red", "sys_maint", "STATIC JUDGMENT", "backdoor",
                    "TRACE EXCERPT", "FLOW BODIES", "evil.test", "DB DIFF"):
         assert needle in pack
+    # Check that FLOW BODIES section is inside a json fence
+    flow_start = pack.find("=== FLOW BODIES")
+    flow_end = pack.find("=== ", flow_start + 1)
+    flow_section = pack[flow_start:flow_end]
+    assert "```json" in flow_section and "evil.test" in flow_section
+    assert flow_section.count("```") >= 2, "FLOW BODIES should have opening and closing fences"
+    # Check that DB DIFF section is inside a json fence
+    db_start = pack.find("=== DB DIFF")
+    db_end = pack.find("=== ", db_start + 1)
+    db_section = pack[db_start:db_end]
+    assert "```json" in db_section and "sys_maint" in db_section
+    assert db_section.count("```") >= 2, "DB DIFF should have opening and closing fences"
 
 
 def test_run_engine_success_and_failure(tmp_path):
@@ -161,3 +173,23 @@ def test_run_coverage_defaults_from_cavern_and_fatal(tmp_path, monkeypatch):
     v = po.run(case, {"case_id": "FIO-7"}, client, str(root), PROMPTS, [str(eng)])
     assert v["coverage"] == "unauthenticated"
     assert "needs_input=password" in client.calls[0][0][1]["content"]
+
+
+def test_run_missing_marker_degrades(tmp_path, monkeypatch):
+    case, root, eng = _setup(tmp_path)
+    monkeypatch.setattr(po, "flow_bodies", lambda root, epoch: [])
+    # Two replies without the marker line
+    client = FakeClient(GOOD_VERDICT, ["# No marker here\n", "# Still no marker\n"])
+    v = po.run(case, {"case_id": "FIO-7"}, client, str(root), PROMPTS, [str(eng)])
+    # Verdict still goes red (max of deterministic and model)
+    assert v["verdict"] == "red" and v["decided_by"] == "agree"
+    # YARA degrades to needs-review
+    assert v["yara"] == "needs-review"
+    # report_md contains the final reply text
+    report_md = open(os.path.join(case.dir, "kadath", "report.md")).read()
+    assert "# Still no marker" in report_md
+    # draft.yar has the degradation comment
+    draft_yar = open(os.path.join(case.dir, "kadath", "draft.yar")).read()
+    assert "no rule produced: model reply lacked the =====DRAFT.YAR===== marker" in draft_yar
+    # Client was called 3 times: verdict, first report attempt, second report attempt
+    assert len(client.calls) == 3
