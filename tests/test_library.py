@@ -73,3 +73,68 @@ def test_source_view_numbered_and_truncated(tmp_path):
     assert "2001| $x1999" in text
     assert "[lines " in text and "omitted]" in text
     assert "500| $x498" not in text
+
+
+def test_case_insensitive_function_matching(tmp_path):
+    """PHP function names are case-insensitive; test that uppercase variations are detected."""
+    src = ("<?php\n"
+           "SYSTEM($_GET['c']);\n"
+           "Eval(base64_decode('x'));\n"
+           "CURL_INIT();\n"
+           "WP_Create_User('a','b');\n")
+    p = tmp_path / "mixed_case.php"
+    p.write_text(src)
+    f = library.static_facts(str(p))
+    assert f["dangerous"]["system"] == 1
+    assert f["dangerous"]["eval"] == 1
+    assert f["dangerous"]["base64_decode"] == 1
+    assert f["network"] == ["curl_init"]
+    assert f["wp_api"] == ["wp_create_user"]
+
+    # Test truncation preserves uppercase dangerous functions in source_view
+    lines = ["<?php"] + ["filler"] * 5000 + ["SYSTEM($_GET['cmd']);"] + ["filler"] * 5000
+    big = tmp_path / "big_upper.php"
+    big.write_text("\n".join(lines))
+    text, trunc = library.source_view(str(big), limit=20000, head=4000, tail=2000)
+    assert trunc is True
+    assert "SYSTEM(" in text
+
+
+def test_hidden_dirs_in_walk(tmp_path):
+    """Hidden directories (.git, .cache) containing PHP should not cause multi-file classification."""
+    case_dir = tmp_path / "FIO-100"
+    case_dir.mkdir()
+    (case_dir / "s.php").write_text("<?php echo 1;")
+    git_dir = case_dir / ".git" / "hooks"
+    git_dir.mkdir(parents=True)
+    (git_dir / "x.php").write_text("<?php")
+
+    cases = library.walk(str(tmp_path))
+    by = {c.id: c for c in cases}
+    assert by["FIO-100"].skip_reason is None
+    assert by["FIO-100"].php.endswith("s.php")
+
+
+def test_empty_php_file(tmp_path):
+    """Empty PHP file should return expected zero values."""
+    p = tmp_path / "empty.php"
+    p.write_text("")
+    f = library.static_facts(str(p))
+    assert f["size"] == 0
+    assert f["lines"] == 0
+    assert f["entropy"] == 0.0
+    assert f["has_blob"] is False
+    text, truncated = library.source_view(str(p))
+    assert text == ""
+    assert truncated is False
+
+
+def test_non_utf8_bytes(tmp_path):
+    """File with non-UTF-8 bytes should decode with replace and not raise."""
+    p = tmp_path / "binary.php"
+    p.write_bytes(b"<?php\n\xff\xfe echo 1;\n")
+    f = library.static_facts(str(p))
+    assert f["lines"] == 2
+    text, _ = library.source_view(str(p))
+    assert "1| <?php" in text
+    assert "2| " in text

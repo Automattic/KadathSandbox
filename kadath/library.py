@@ -16,7 +16,7 @@ NETWORK_FUNCS = ("curl_init", "curl_exec", "fsockopen", "stream_socket_client",
                  "file_get_contents", "fopen", "wp_remote_get", "wp_remote_post",
                  "wp_remote_request", "socket_create")
 _WP_API = re.compile(r"\b(wp_[a-z0-9_]+|add_action|add_filter|update_option|get_option|"
-                     r"add_option|delete_option|update_user_meta|wp_schedule_event)\s*\(")
+                     r"add_option|delete_option|update_user_meta|wp_schedule_event)\s*\(", re.IGNORECASE)
 _BLOB = re.compile(r"[A-Za-z0-9+/=]{200,}|(?:\\x[0-9a-fA-F]{2}){20,}")
 _LITERAL = re.compile(r"'([^'\\]|\\.)*'|\"([^\"\\]|\\.)*\"")
 
@@ -27,8 +27,12 @@ def walk(library_dir):
         d = os.path.join(library_dir, name)
         if not os.path.isdir(d) or name.startswith(".") or name.startswith("kadath-"):
             continue
-        phps = sorted(os.path.join(r, fn) for r, _ds, fs in os.walk(d)
-                      for fn in fs if fn.lower().endswith(".php"))
+        phps = []
+        for r, ds, fs in os.walk(d):
+            # Skip hidden directories in inner walk
+            ds[:] = [x for x in ds if not x.startswith(".")]
+            phps.extend(sorted(os.path.join(r, fn) for fn in fs if fn.lower().endswith(".php")))
+        phps = sorted(phps)
         readme = os.path.join(d, "README.md")
         readme = readme if os.path.isfile(readme) else None
         if not phps:
@@ -66,11 +70,11 @@ def static_facts(path):
     text = raw.decode("utf-8", errors="replace")
     dangerous = {}
     for fn in DANGEROUS_FUNCS:
-        n = len(re.findall(r"\b" + re.escape(fn) + r"\s*\(", text))
+        n = len(re.findall(r"\b" + re.escape(fn) + r"\s*\(", text, re.IGNORECASE))
         if n:
-            dangerous[fn] = n
-    network = sorted({fn for fn in NETWORK_FUNCS if re.search(r"\b" + re.escape(fn) + r"\s*\(", text)})
-    wp_api = sorted({m.group(1) for m in _WP_API.finditer(text)})
+            dangerous[fn.lower()] = n
+    network = sorted({fn.lower() for fn in NETWORK_FUNCS if re.search(r"\b" + re.escape(fn) + r"\s*\(", text, re.IGNORECASE)})
+    wp_api = sorted({m.group(1).lower() for m in _WP_API.finditer(text)})
     longest = max((m.end() - m.start() - 2 for m in _LITERAL.finditer(text)), default=0)
     return {
         "sha1": hashlib.sha1(raw).hexdigest(), "sha256": hashlib.sha256(raw).hexdigest(),
@@ -83,7 +87,7 @@ def static_facts(path):
 
 def _interesting(line):
     return bool(_BLOB.search(line)) or any(
-        re.search(r"\b" + re.escape(fn) + r"\s*\(", line) for fn in DANGEROUS_FUNCS + NETWORK_FUNCS)
+        re.search(r"\b" + re.escape(fn) + r"\s*\(", line, re.IGNORECASE) for fn in DANGEROUS_FUNCS + NETWORK_FUNCS)
 
 
 def source_view(path, limit=65536, head=24576, tail=8192):
