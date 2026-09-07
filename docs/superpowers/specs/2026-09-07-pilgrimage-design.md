@@ -321,6 +321,16 @@ profile are recorded in every `verdict.json`.
   this in batch via `bin/kadath pilgrimage`.
 - `Makefile`: `pilgrimage` and `pilgrimage-smoke` targets.
 
+## Rulings during implementation
+
+1. `wp_read` answers from the run's recorded `db_diff`, not the live stack, because the sandbox holds a later case by the time the scry pass runs.
+2. The "red with confidence < 0.6" scry gate is decided inside the pass; the manifest keeps the listed columns.
+3. Flow bodies come from a second mitmproxy addon, `kadath/flowbody.py`, run like `flowdump.py`.
+4. `--engine CMD` and `--no-stack` are test hooks so the fake-model e2e runs without Docker.
+5. The final verdict is strictly `max(deterministic, model)`; a disagreement never lowers it (that would let a model "green" erase a deterministic red) — it routes the case to the Deep Scrying instead, alongside ambers and reds with confidence < 0.6.
+6. When the Cavern model says `runnable: false` or `family: fragment`, the `confidence < 0.7` and `verdict == amber` forces are suppressed; the fact-based forces (`wp_` API usage, network primitive, blob) always apply. A file that cannot run is not worth an Offering, but a fragment that calls `wp_create_user` still gets one attempt.
+7. The Deep Scrying verdict is `max(deterministic, model)` in every outcome — verified, `unverified-claims`, and `tool-cap` — so deterministic evidence (an administrator created, non-core egress) is never cleared by a model; a model-only red can still be lowered. Its `wp_read` tool answers from the run's recorded `db_diff` (ruling 1) and its description says so.
+
 ## Out of scope (v1)
 
 - Overlapping the model and the sandbox (approach 3).
