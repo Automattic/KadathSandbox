@@ -118,7 +118,7 @@ downloaded trace or flow in a browser tab.
 triages every single-PHP case with a local Ollama model, no Claude in the loop.
 Three passes, each resumable from `kadath-triage.csv`:
 
-1. **Cavern** — a static judgment from the source: verdict, family, malicious
+1. **Cavern** — the Cavern of Flame: a static judgment from the source: verdict, family, malicious
    line ranges, and whether detonation would teach anything a static read cannot.
    The script forces "worthy" on anything using WordPress APIs, network
    primitives, or encoded blobs, and on anything the model is not confident about.
