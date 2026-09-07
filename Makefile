@@ -1,4 +1,4 @@
-.PHONY: up down reset selftest snapshot logs trace shell build offer web
+.PHONY: up down reset selftest snapshot logs trace shell build offer web pilgrimage pilgrimage-smoke
 
 up:
 	docker compose up -d --build --wait db gateway wpnet netcap wordpress
@@ -58,3 +58,16 @@ offer:
 # Start the localhost web UI at http://127.0.0.1:8090
 web:
 	python3 bin/kadath web $(if $(PORT),--port $(PORT))
+
+# The Pilgrimage: triage a threat-library for-later-review directory with a local
+# Ollama model. LIBRARY is required. PASS defaults to all (cavern -> offer -> scry).
+#   make pilgrimage LIBRARY=~/WORK/jetpack-threat-library/for-later-review PASS=cavern LIMIT=50
+pilgrimage:
+	@test -n "$(LIBRARY)" || { echo "usage: make pilgrimage LIBRARY=<for-later-review dir> [PASS=cavern|offer|scry|all] [LIMIT=N]"; exit 2; }
+	python3 bin/kadath pilgrimage "$(LIBRARY)" --pass $(or $(PASS),all) $(if $(LIMIT),--limit $(LIMIT))
+
+# Three hand-picked cases against the real model and the real stack: the
+# pre-flight before a week-long pilgrimage. CASES is a space-separated list.
+pilgrimage-smoke:
+	@test -n "$(LIBRARY)" && test -n "$(CASES)" || { echo "usage: make pilgrimage-smoke LIBRARY=<dir> CASES='ID1 ID2 ID3'"; exit 2; }
+	python3 bin/kadath pilgrimage "$(LIBRARY)" --pass all $(foreach c,$(CASES),--case $(c))
