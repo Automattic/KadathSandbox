@@ -180,7 +180,12 @@ def run(case, row, client, root, prompts_dir, engine_cmd):
     os.makedirs(kd, exist_ok=True)
     with open(os.path.join(kd, "cavern.json")) as f:
         cav = json.load(f)
-    summary_path = run_engine(engine_cmd, case.php, case.id, root, adopt=library.wants_wordpress(case.php))
+    try:
+        summary_path = run_engine(engine_cmd, case.php, case.id, root, adopt=library.wants_wordpress(case.php))
+    except EngineError as e:
+        with open(os.path.join(kd, "engine-stderr.txt"), "w") as f:
+            f.write(e.stderr)
+        raise
     run_dir = os.path.dirname(summary_path)
     with open(summary_path) as f:
         summ = json.load(f)

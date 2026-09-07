@@ -279,3 +279,38 @@ def test_settled_requires_full_coverage():
     for cov in ("stubbed", "unauthenticated", "errored"):
         assert not pilgrimage._settled(dict(base, coverage=cov))
     assert not pilgrimage._settled(dict(base, verdict="red", coverage="stubbed"))
+
+
+def test_run_pass_breaker_ignores_sample_failures(tmp_path):
+    m = _m(tmp_path)
+
+    def fn(row):
+        e = RuntimeError("engine failed on this sample")
+        e.stack_healthy = True
+        raise e
+    counts = pilgrimage.run_pass("offer", m, m.pending("cavern"), fn, breaker=2)
+    assert counts["error"] == 5 and counts["aborted"] is False
+
+
+def test_run_pass_keeps_error_tail(tmp_path):
+    m = _m(tmp_path, 1)
+
+    def fn(row):
+        raise RuntimeError("head " + "x" * 600 + " TAIL-MESSAGE")
+    pilgrimage.run_pass("cavern", m, m.pending("cavern"), fn)
+    err = m.rows["C0"]["error"]
+    assert err.endswith("TAIL-MESSAGE") and err.startswith("…") and len(err) <= 500
+
+
+def test_stack_recover_reports_health(monkeypatch):
+    class P:
+        def __init__(self, out): self.stdout = out
+    monkeypatch.setattr(pilgrimage, "sh", lambda *a, **k: P('[{"Service":"wordpress","State":"running"}]'))
+    assert pilgrimage._stack_recover() is True
+    calls = []
+
+    def sh(args, **k):
+        calls.append(args)
+        return P("")
+    monkeypatch.setattr(pilgrimage, "sh", sh)
+    assert pilgrimage._stack_recover() is False and ["make", "down"] in calls and ["make", "up"] in calls

@@ -328,3 +328,12 @@ def test_run_adopts_when_sample_wants_wordpress(tmp_path, monkeypatch):
     client = FakeClient(GOOD_VERDICT, ["# R\n=====DRAFT.YAR=====\nrule k { strings: $a = \"zz\" condition: $a }\n"])
     po.run(case, {"case_id": "FIO-7"}, client, str(root), PROMPTS, [str(eng)])
     assert "--adopt-wp" in (root / "args").read_text()
+
+
+def test_run_saves_engine_stderr_on_failure(tmp_path, monkeypatch):
+    case, root, eng = _setup(tmp_path)
+    eng.write_text("#!/bin/sh\necho 'wp plugin activate failed: unexpected output' >&2\nexit 1\n")
+    monkeypatch.setattr(po, "flow_bodies", lambda root, epoch: ([], None))
+    with pytest.raises(po.EngineError):
+        po.run(case, {"case_id": "FIO-7"}, FakeClient(GOOD_VERDICT, []), str(root), PROMPTS, [str(eng)])
+    assert "unexpected output" in open(os.path.join(case.dir, "kadath", "engine-stderr.txt")).read()

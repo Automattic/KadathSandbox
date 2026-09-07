@@ -46,6 +46,21 @@ def _wp(args):
               cwd=ROOT).stdout
 
 
+def _activate_direct(plugin_file, wp=None):
+    """Activate a plugin by editing active_plugins, bypassing WordPress's
+    activation sandbox. The sandbox executes the plugin inside WP-CLI — an
+    adopted fragment that fatals or echoes there would abort the offering
+    before the trigger, where the stub rounds could have handled it."""
+    wp = wp or _wp
+    cur = json.loads(wp(["--skip-plugins", "option", "get", "active_plugins", "--format=json"]) or "[]")
+    if not isinstance(cur, list):
+        cur = list(cur.values()) if isinstance(cur, dict) else []
+    if plugin_file not in cur:
+        cur.append(plugin_file)
+        wp(["--skip-plugins", "option", "update", "active_plugins", json.dumps(cur), "--format=json"])
+    return cur
+
+
 def _healthy():
     try:
         out = sh(["docker", "compose", "ps", "--format", "{{.Service}} {{.Health}}"],
@@ -296,7 +311,9 @@ def offer(argv):
         sh(["docker", "compose", "up", "-d", "--force-recreate", "--wait", "wordpress"], cwd=ROOT)
 
         # activation for plugin/theme (state change; wrapper keeps it untraced)
-        if det.type in ("plugin", "directory-plugin"):
+        if adopted:
+            _activate_direct(f"{det.slug}/{stage.ADOPT_WRAPPER}")
+        elif det.type in ("plugin", "directory-plugin"):
             _wp(["--skip-plugins", "plugin", "activate", det.slug])
         elif det.type in ("theme", "directory-theme"):
             _wp(["--skip-plugins", "theme", "activate", det.slug])

@@ -58,9 +58,11 @@ def run_pass(name, m, rows, fn, breaker=3):
             counts["timeout"] += 1
             consecutive += 1
         except Exception as e:  # one bad case never stops the procession
-            m.update(cid, **{f"{name}_status": "error", "error": f"{type(e).__name__}: {e}"[:500]})
+            msg = f"{type(e).__name__}: {e}"
+            m.update(cid, **{f"{name}_status": "error", "error": msg if len(msg) <= 500 else "…" + msg[-499:]})
             counts["error"] += 1
-            consecutive += 1
+            if not getattr(e, "stack_healthy", False):
+                consecutive += 1
         m.flush()
         print(f"[{name}] {cid}: {m.rows[cid][f'{name}_status']} {m.rows[cid].get(f'{name}_verdict', '')}",
               file=sys.stderr)
@@ -82,14 +84,17 @@ def _stack_up():
 
 
 def _stack_recover():
+    """Return True when the stack was healthy (the failure was the sample's,
+    not the sandbox's); otherwise try one down/up and return False."""
     try:
         ps = sh(["docker", "compose", "ps", "--format", "json"], cwd=ROOT, check=False, timeout=60).stdout
         if "wordpress" in ps and "running" in ps:
-            return
+            return True
         sh(["make", "down"], cwd=ROOT, timeout=300)
         sh(["make", "up"], cwd=ROOT, timeout=900)
     except (ShellError, subprocess.TimeoutExpired) as e:
         print(f"[offer] stack recovery failed: {e}", file=sys.stderr)
+    return False
 
 
 def _case_by_id(cases):
@@ -158,9 +163,10 @@ def main(argv):
             raise RuntimeError(f"free disk below {a.min_free_gb} GB; aborting")
         try:
             v = pilgrim_offer.run(by_id[row["case_id"]], row, client, ROOT, PROMPTS, a.engine)
-        except pilgrim_offer.EngineError:
-            if not a.no_stack:
-                _stack_recover()
+        except pilgrim_offer.EngineError as e:
+            # a per-sample engine failure is an error row; only a sick stack
+            # counts toward the breaker
+            e.stack_healthy = _stack_recover() if not a.no_stack else True
             raise
         fields = {"offer_verdict": v["verdict"], "offer_coverage": v["coverage"], "run_dir": v["run_dir"],
                   "final_verdict": v["verdict"], "decided_by": "offer"}
