@@ -47,7 +47,7 @@ def build_messages(system, case_id, provenance, facts, source_text, truncated):
     user = (UNTRUSTED_PREAMBLE
             + "\n```text\n" + f"Case: {case_id}\nProvenance: {provenance or '(none)'}\n" + "```\n"
             + "\n```json\n" + json.dumps(facts, indent=1) + "\n```\n"
-            + "\n=== SOURCE (line-numbered) ===" + note + "```php\n" + source_text + "\n```\n"
+            + "\n=== SOURCE (line-numbered) ===" + note + "\n```php\n" + source_text + "\n```\n"
             + "\nJudge this file. Reply with the JSON object only.")
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
