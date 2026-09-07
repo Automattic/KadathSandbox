@@ -26,6 +26,10 @@ def test_validate_schema_and_regions():
         cavern.validate(_good(reason="x" * 301), 5)
     with pytest.raises(ValueError):
         cavern.validate(_good(family="ransomware"), 5)
+    # Empty file tests
+    with pytest.raises(ValueError):
+        cavern.validate(_good(), line_count=0)
+    cavern.validate(_good(regions=[]), line_count=0)
 
 
 def test_override_worthy_rules():
@@ -36,6 +40,14 @@ def test_override_worthy_rules():
     r = cavern.override_worthy(_good(), {"wp_api": ["wp_create_user"], "network": ["curl_init"], "has_blob": True})
     assert r == ["wp_api", "network", "blob"]
     assert cavern.override_worthy(_good(worthy=True), plain) == []
+    # Fragment suppresses model-based forces but allows fact-based
+    assert cavern.override_worthy(_good(family="fragment", verdict="amber", confidence=0.5), plain) == []
+    assert cavern.override_worthy(_good(family="fragment", verdict="amber", confidence=0.5),
+                                   {"wp_api": ["wp_create_user"], "network": [], "has_blob": False}) == ["wp_api"]
+    # runnable=False suppresses model-based forces but allows fact-based
+    assert cavern.override_worthy(_good(runnable=False, family="webshell", verdict="amber", confidence=0.5), plain) == []
+    assert cavern.override_worthy(_good(runnable=False, family="webshell", verdict="amber", confidence=0.5),
+                                   {"wp_api": [], "network": ["curl_init"], "has_blob": False}) == ["network"]
 
 
 def test_build_messages_fences_evidence():
@@ -45,8 +57,17 @@ def test_build_messages_fences_evidence():
     assert msgs[0] == {"role": "system", "content": "SYS"}
     u = msgs[1]["content"]
     assert u.startswith(cavern.UNTRUSTED_PREAMBLE)
-    assert "FIO-1" in u and "Bulk import" in u and '"eval": 1' in u
-    assert "```php" in u and "eval($_POST['x'])" in u
+    # Check all three fences exist
+    assert "```text" in u and "```json" in u and "```php" in u
+    # Check case id and provenance appear in text fence
+    text_start = u.find("```text\n")
+    text_end = u.find("\n```", text_start + 8)
+    text_section = u[text_start + 8:text_end]
+    assert "FIO-1" in text_section and "Bulk import" in text_section
+    # Check facts appear in json fence
+    assert '"eval": 1' in u
+    # Check source appears in php fence
+    assert "eval($_POST['x'])" in u
     assert "TRUNCATED" not in u
     assert "TRUNCATED" in cavern.build_messages("SYS", "x", "", facts, "1| a", True)[1]["content"]
 

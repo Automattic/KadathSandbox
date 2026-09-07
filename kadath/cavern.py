@@ -45,19 +45,21 @@ def load_prompt(prompts_dir, name):
 def build_messages(system, case_id, provenance, facts, source_text, truncated):
     note = "\nNOTE: the source view is TRUNCATED (head, tail, and interesting lines only).\n" if truncated else ""
     user = (UNTRUSTED_PREAMBLE
-            + f"\nCase: {case_id}\nProvenance: {provenance or '(none)'}\n"
-            + "\n=== STATIC FACTS ===\n" + json.dumps(facts, indent=1)
-            + "\n=== SOURCE (line-numbered) ===" + note + "\n```php\n" + source_text + "\n```\n"
+            + "\n```text\n" + f"Case: {case_id}\nProvenance: {provenance or '(none)'}\n" + "```\n"
+            + "\n```json\n" + json.dumps(facts, indent=1) + "\n```\n"
+            + "\n=== SOURCE (line-numbered) ===" + note + "```php\n" + source_text + "\n```\n"
             + "\nJudge this file. Reply with the JSON object only.")
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
 
 def validate(obj, line_count):
     llm.validate_against(SCHEMA, obj)
+    if line_count == 0 and obj["regions"]:
+        raise ValueError("$.regions: no regions allowed for empty file")
     for i, r in enumerate(obj["regions"]):
         if r["start_line"] > r["end_line"]:
             raise ValueError(f"$.regions[{i}]: start_line > end_line")
-        if r["end_line"] > max(line_count, 1):
+        if r["end_line"] > line_count:
             raise ValueError(f"$.regions[{i}]: end_line {r['end_line']} beyond {line_count} lines")
 
 
@@ -65,16 +67,19 @@ def override_worthy(parsed, facts):
     if parsed.get("worthy"):
         return []
     reasons = []
+    # Fact-based forces always apply
     if facts.get("wp_api"):
         reasons.append("wp_api")
     if facts.get("network"):
         reasons.append("network")
     if facts.get("has_blob"):
         reasons.append("blob")
-    if parsed.get("confidence", 0) < 0.7:
-        reasons.append("confidence<0.7")
-    if parsed.get("verdict") == "amber":
-        reasons.append("verdict=amber")
+    # Suppress model-based forces for fragments and non-runnable files
+    if parsed.get("runnable") is not False and parsed.get("family") != "fragment":
+        if parsed.get("confidence", 0) < 0.7:
+            reasons.append("confidence<0.7")
+        if parsed.get("verdict") == "amber":
+            reasons.append("verdict=amber")
     return reasons
 
 

@@ -19,6 +19,7 @@ Reply with a single JSON object matching the schema you were given. Field meanin
   - A sample that is fully explained statically — a one-line `eval($_POST[...])`, a plain uploader, a defacement — is `red` but **not worthy**: there is nothing left to learn.
   - A sample that is obfuscated or packed, that uses only legitimate WordPress APIs (`wp_create_user`, `update_option`, `wp_schedule_event`, hooks), that fetches a second stage, or that touches the database **is worthy** even when already `red`: the Offering yields indicators (domains, user logins, option names, dropped files) a static read cannot.
   - A `fragment` or non-runnable file is **never worthy**.
+  - (The script may still force an Offering when the source uses WordPress APIs, network primitives, or encoded blobs, regardless of your judgment.)
 - `reason`: one or two sentences, plain English, citing line numbers.
 
 Judge from the source. Do not speculate about behaviour the code cannot produce.
