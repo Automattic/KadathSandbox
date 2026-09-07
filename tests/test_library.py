@@ -138,3 +138,15 @@ def test_non_utf8_bytes(tmp_path):
     text, _ = library.source_view(str(p))
     assert "1| <?php" in text
     assert "2| " in text
+
+
+def test_network_needs_url_for_file_readers(tmp_path):
+    local = tmp_path / "local.php"
+    local.write_text("<?php\n$c = file_get_contents(__DIR__.'/cache.txt');\n$h = fopen('log.txt','a');\n")
+    assert library.static_facts(str(local))["network"] == []
+    remote = tmp_path / "remote.php"
+    remote.write_text("<?php\n$c = file_get_contents('https://evil.test/x');\n")
+    assert library.static_facts(str(remote))["network"] == ["file_get_contents"]
+    sock = tmp_path / "sock.php"
+    sock.write_text("<?php\n$s = fsockopen('1.2.3.4', 6667);\ncurl_init();\n")
+    assert library.static_facts(str(sock))["network"] == ["curl_init", "fsockopen"]

@@ -127,3 +127,8 @@ def test_schema_missing_deps_and_phishing_family():
 def test_prompt_carries_judgment_rules():
     text, _ = cavern.load_prompt(PROMPTS, "cavern")
     assert "Data is not code" in text and "hinges on a missing file" in text and "missing_deps" in text
+
+
+def test_prompt_names_seo_clients_as_spam():
+    text, _ = cavern.load_prompt(PROMPTS, "cavern")
+    assert "SAPE" in text and "`spam-seo` and `red`" in text

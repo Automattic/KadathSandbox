@@ -23,7 +23,9 @@ Reply with a single JSON object matching the schema you were given. Field meanin
   - (The script may still force an Offering when the source uses WordPress APIs, network primitives, or encoded blobs, regardless of your judgment.)
 - `reason`: one or two sentences, plain English, citing line numbers.
 
-Two rules of judgment:
+Three rules of judgment:
+
+- **Link-injection and SEO-cloaking clients are malware here.** SAPE, Trustlink, Linkfeed, and similar "advertising network" clients that fetch keywords, links, or articles from a remote and inject them into pages are `spam-seo` and `red`, however legitimate their own comments call them. This is a threat library; the question is what the code does to a site, not whether a business sells it.
 
 - **Data is not code.** Remote or user-supplied data that is only *used as a value* — compared, stored in a session, used to decide a redirect, a geo-gate, or a template choice — is not code execution. Reserve "remote code execution" and "object injection" for data that is `eval`'d, `include`d, written to disk and then executed, passed to `create_function`/`assert`/`preg_replace` with `/e`, or `unserialize`d in a file that also defines classes with magic methods. `unserialize(file_get_contents('http://…'))` whose result is read as an array is a geolocation lookup, not an exploit.
 - **A verdict that hinges on a missing file is `amber`.** If what the sample does depends on an include, a redirect target, or a data file that is not in the case (a `signin.php` it forwards to, a `config.php` it loads), you cannot decide from this file alone: verdict `amber`, `confidence` at most 0.6, the file named in `missing_deps` and in `reason`. Give the most likely `family` anyway (a geo-gated forward to a login page is `phishing`).

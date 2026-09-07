@@ -12,6 +12,7 @@ Case = collections.namedtuple("Case", "id dir php readme skip_reason")
 DANGEROUS_FUNCS = tuple(traceparse.DANGEROUS) + tuple(traceparse.FILE_OPS) + (
     "str_rot13", "gzuncompress", "gzdecode", "preg_replace", "unserialize",
     "include", "include_once", "require", "require_once", "chmod", "mail")
+_LOCAL_OR_REMOTE = ("file_get_contents", "fopen")
 NETWORK_FUNCS = ("curl_init", "curl_exec", "fsockopen", "stream_socket_client",
                  "file_get_contents", "fopen", "wp_remote_get", "wp_remote_post",
                  "wp_remote_request", "socket_create")
@@ -73,7 +74,12 @@ def static_facts(path):
         n = len(re.findall(r"\b" + re.escape(fn) + r"\s*\(", text, re.IGNORECASE))
         if n:
             dangerous[fn.lower()] = n
-    network = sorted({fn.lower() for fn in NETWORK_FUNCS if re.search(r"\b" + re.escape(fn) + r"\s*\(", text, re.IGNORECASE)})
+    # file_get_contents/fopen read local files far more often than URLs; they
+    # count as network primitives only when the file names a URL scheme too
+    has_url = bool(re.search(r"\b(?:https?|ftp)://", text, re.IGNORECASE))
+    network = sorted({fn.lower() for fn in NETWORK_FUNCS
+                      if re.search(r"\b" + re.escape(fn) + r"\s*\(", text, re.IGNORECASE)
+                      and (has_url or fn not in _LOCAL_OR_REMOTE)})
     wp_api = sorted({m.group(1).lower() for m in _WP_API.finditer(text)})
     longest = max((m.end() - m.start() - 2 for m in _LITERAL.finditer(text)), default=0)
     return {
