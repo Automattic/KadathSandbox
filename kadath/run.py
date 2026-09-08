@@ -14,6 +14,7 @@ import subprocess
 import sys
 import time
 from datetime import datetime, timezone
+from kadath import stubs
 
 # Artifact file types worth compressing in a run bundle. Xdebug traces are the
 # bulk (a page view is ~200 MB of tab-separated text, ~16x smaller gzipped); the
@@ -43,6 +44,21 @@ def _wp(args):
     """Run wp inside the wordpress container (wrapper adds --skip-plugins)."""
     return sh(["docker", "compose", "exec", "-T", "wordpress", "wp"] + args,
               cwd=ROOT).stdout
+
+
+def _activate_direct(plugin_file, wp=None):
+    """Activate a plugin by editing active_plugins, bypassing WordPress's
+    activation sandbox. The sandbox executes the plugin inside WP-CLI — an
+    adopted fragment that fatals or echoes there would abort the offering
+    before the trigger, where the stub rounds could have handled it."""
+    wp = wp or _wp
+    cur = json.loads(wp(["--skip-plugins", "option", "get", "active_plugins", "--format=json"]) or "[]")
+    if not isinstance(cur, list):
+        cur = list(cur.values()) if isinstance(cur, dict) else []
+    if plugin_file not in cur:
+        cur.append(plugin_file)
+        wp(["--skip-plugins", "option", "update", "active_plugins", json.dumps(cur), "--format=json"])
+    return cur
 
 
 def _healthy():
@@ -212,6 +228,10 @@ def offer(argv):
     ap.add_argument("--skip-selftest", action="store_true")
     ap.add_argument("--keep-active", action="store_true")
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--stub-missing", action="store_true",
+                    help="stub missing includes/functions PHP reports and trigger again (up to 3 rounds)")
+    ap.add_argument("--adopt-wp", action="store_true",
+                    help="offer a loose .php that expects WordPress as a synthetic plugin instead of a bare webshell")
     a = ap.parse_args(argv)
 
     # detect
@@ -266,14 +286,34 @@ def offer(argv):
         elif not a.keep_active:
             stage.isolate(ROOT, lambda args: _wp(["--skip-plugins"] + args))
 
-        staged = stage.place(ROOT, a.sample, det)
+        # a file lifted out of a plugin/theme dies on add_action() in a bare
+        # webroot; adopt it as a plugin so WordPress is loaded beneath it
+        adopted = False
+        stage_src = a.sample
+        if a.adopt_wp and det.type == "webshell":
+            stage_src = stage.adopt(ROOT, a.sample, det.slug)
+            det = detect.Detected("plugin", det.slug, f"samples/plugins/{det.slug}")
+            adopted = True
+        staged = stage.place(ROOT, stage_src, det)
         if det.type == "zip":
             det = detect.Detected(_type_from_staged(staged, ROOT), det.slug,
                                   os.path.relpath(staged, ROOT))
+        # a single file lifted out of a kit dies on its first require; stub the
+        # literal includes up front, then let PHP name the rest after the trigger
+        made_stubs, stub_files = [], []
+        if a.stub_missing and os.path.isfile(staged):
+            made_stubs, stub_files = stubs.prescan(staged, os.path.dirname(staged), ROOT)
+        elif a.stub_missing and adopted:
+            # the shims file loads before the sample, so it stays stub_files[0]
+            shims = os.path.join(staged, stage.ADOPT_SHIMS)
+            made_stubs, files = stubs.prescan(os.path.join(staged, stage.ADOPT_SAMPLE), staged, ROOT)
+            stub_files = [shims] + files
         sh(["docker", "compose", "up", "-d", "--force-recreate", "--wait", "wordpress"], cwd=ROOT)
 
         # activation for plugin/theme (state change; wrapper keeps it untraced)
-        if det.type in ("plugin", "directory-plugin"):
+        if adopted:
+            _activate_direct(f"{det.slug}/{stage.ADOPT_WRAPPER}")
+        elif det.type in ("plugin", "directory-plugin"):
             _wp(["--skip-plugins", "plugin", "activate", det.slug])
         elif det.type in ("theme", "directory-theme"):
             _wp(["--skip-plugins", "theme", "activate", det.slug])
@@ -287,6 +327,8 @@ def offer(argv):
         sha256, md5 = _hash_sample(a.sample)
         dns_off = os.path.getsize(os.path.join(ROOT, "artifacts/dns/dns.log")) if os.path.exists(os.path.join(ROOT, "artifacts/dns/dns.log")) else 0
         drop_off = os.path.getsize(os.path.join(ROOT, "artifacts/dropped.log")) if os.path.exists(os.path.join(ROOT, "artifacts/dropped.log")) else 0
+        err_log = os.path.join(ROOT, "artifacts/php/php-error.log")
+        err_off = os.path.getsize(err_log) if os.path.exists(err_log) else 0
         before = _dbstate()
 
         # trigger
@@ -305,6 +347,16 @@ def offer(argv):
             actions = trigger.default_actions(det)
         trigger.execute(session, actions)
         time.sleep(3)
+        if a.stub_missing:
+            def _retrigger():
+                session.actions.append("-- retrigger after stubbing --")
+                trigger.execute(session, actions)
+                time.sleep(3)
+            made, fatal = stubs.stub_rounds(ROOT, err_log, err_off, _retrigger, stub_files=stub_files)
+            made_stubs.extend(made)
+        else:
+            fatal = any(stubs.is_fatal(l) for l in stubs.new_lines(err_log, err_off))
+        fatals = stubs.fatal_lines(stubs.new_lines(err_log, err_off))
 
         # collect
         after = _dbstate()
@@ -328,7 +380,8 @@ def offer(argv):
                        "size_bytes": os.path.getsize(a.sample) if os.path.isfile(a.sample) else 0,
                        "type": det.type}
         run_meta = {"epoch": epoch, "utc": iso, "slug": det.slug,
-                    "trigger_actions": session.actions, "reset": a.reset}
+                    "trigger_actions": session.actions, "reset": a.reset,
+                    "stubs": made_stubs, "fatal": fatal, "fatals": fatals, "adopted": adopted}
         creds = _credentials_from_trace(traces)
         s = summary.build_summary(
             sample_meta, run_meta, db_diff, traceparse.callchain(traces),

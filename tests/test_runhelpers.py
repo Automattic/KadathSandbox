@@ -28,3 +28,23 @@ def test_apply_slug_webshell_keeps_dest():
     d = detect.Detected("webshell", "old", "samples/webroot/shell.php")
     n = run._apply_slug(d, "new")
     assert n.dest == "samples/webroot/shell.php"
+
+
+def test_activate_direct_edits_active_plugins():
+    from kadath import run
+    calls = []
+
+    def wp(args):
+        calls.append(args)
+        if args[1:3] == ["option", "get"]:
+            return '["akismet/akismet.php"]'
+        return ""
+    out = run._activate_direct("FIO-1/kadath-wrapper.php", wp=wp)
+    assert out == ["akismet/akismet.php", "FIO-1/kadath-wrapper.php"]
+    assert calls[1][:4] == ["--skip-plugins", "option", "update", "active_plugins"]
+    assert '"FIO-1/kadath-wrapper.php"' in calls[1][4] and calls[1][5] == "--format=json"
+    assert not any(a[1:3] == ["plugin", "activate"] for a in calls)
+    # already active: no update
+    calls.clear()
+    run._activate_direct("akismet/akismet.php", wp=wp)
+    assert len(calls) == 1

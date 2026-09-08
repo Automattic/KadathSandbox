@@ -75,7 +75,23 @@ For a scripted run without an agent:
 
     make offer SAMPLE=path/to/sample.php
     # or, with options:
-    python3 bin/kadath offer path/to/sample.php [--recipe r.kadath] [--reset] [--json]
+    python3 bin/kadath offer path/to/sample.php [--recipe r.kadath] [--reset] [--json] [--stub-missing] [--adopt-wp]
+
+`--stub-missing` is for a single file lifted out of a kit: when PHP reports a
+missing include or an undefined function, the engine writes an empty stand-in
+under `samples/webroot/` (functions return `null`) and triggers again, up to
+three rounds, so the sample gets past its first `require`. What was stubbed is
+recorded in `summary.json` under `run.stubs`, and `run.fatal` says whether a
+fatal survived the last round.
+
+`--adopt-wp` is for a file lifted out of a plugin or theme: as a bare webshell
+it dies on its first `add_action()` because WordPress is not loaded. Adopted, it
+is wrapped as a synthetic plugin (`Plugin Name: kadath-adopted <slug>`) with an
+empty shims file loaded before it, staged under `samples/plugins/`, and
+activated — WordPress functions and classes exist, its hooks fire on `GET /`,
+and shims for non-core helpers it still misses go into the shims file.
+`run.adopted` records it. The pilgrimage passes both flags, adopting whenever
+the source references WordPress APIs.
 
 It brings the stack up, runs the self-test gate once per build, isolates any
 prior sample, stages and triggers this one by type, snapshots, and writes
@@ -111,6 +127,52 @@ It runs the same `bin/kadath offer` engine, one offering at a time. It binds
 CSRF token); keep the port local — do not expose it to a network. Downloaded
 artifacts are hostile content served as inert attachments; do not open a
 downloaded trace or flow in a browser tab.
+
+## The Pilgrimage — batch triage with a local model
+
+`bin/kadath pilgrimage` walks a threat-library `for-later-review/` directory and
+triages every single-PHP case with a local Ollama model, no Claude in the loop.
+Three passes, each resumable from `kadath-triage.csv`:
+
+1. **Cavern** — the Cavern of Flame: a static judgment from the source: verdict, family, malicious
+   line ranges, and whether detonation would teach anything a static read cannot.
+   The script forces "worthy" on anything using WordPress APIs, network
+   primitives, or encoded blobs, and on anything the model is not confident about.
+2. **Offer** — `bin/kadath offer` detonates each worthy case; the model writes
+   `report.md`, `iocs.json` extras, and `draft.yar` from a compact evidence pack.
+   The deterministic verdict travels with it: the model can argue, but never
+   lowers it — the higher of the two wins, and any disagreement sends the case
+   to the Deep Scrying.
+   The Offering runs with `--stub-missing`, and the final verdict is the highest
+   of the Cavern's, the deterministic, and the model's. A run whose `coverage`
+   is not `full` — `stubbed` (ran against empty stand-ins), `unauthenticated`
+   (never got its password), `errored` (fataled) — cannot settle a green:
+   runtime silence is not evidence. A case is settled when the Cavern and the
+   model agree and the deterministic layer does not exceed them; everything
+   else — amber, a disagreement, an unexercised green — goes to the Scry.
+3. **Scry** — ambers, low-confidence reds, and every disagreement get an agentic
+   re-examination with read-only tools; every claim must quote a tool result
+   verbatim or it is dropped, and it never lowers a deterministic verdict.
+
+Results are written beside each sample under `<case>/kadath/` and never
+committed; promotion into the library stays a human PR.
+
+```bash
+ollama pull orcarouter/Qwen3.8-27B-Uncensored:latest
+make pilgrimage LIBRARY=~/WORK/jetpack-threat-library/for-later-review PASS=cavern LIMIT=50
+```
+
+Run the Cavern pass over everything first (~20–30 s per case), read the manifest,
+then `PASS=offer` (~2–3 min and ~30 MB of `reports/` per worthy case) and
+`PASS=scry`. `make pilgrimage-smoke LIBRARY=… CASES='ID1 ID2 ID3'` runs all three
+passes on hand-picked cases against the real model and stack before a long run.
+
+Knobs: `--model`, `--ollama` (env `KADATH_MODEL`, `KADATH_OLLAMA_URL`),
+`--sampling deepscry.temperature=0.4` (repeatable), `--profiles file.json`,
+`--seed N`, `--retry-errors`, `--force`, `--min-free-gb`. Deep Scrying must not run
+at temperature 0 (Qwen3 loops with thinking on); keep `repeat_penalty` ≤ 1.1 or
+JSON and YARA output degrade. The profile, model, and prompt hashes used are
+recorded in every `verdict.json`.
 
 ## Loading a sample
 

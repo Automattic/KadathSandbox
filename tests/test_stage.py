@@ -93,3 +93,44 @@ def test_clear_run_artifacts_keeps_logs_and_gitkeep(tmp_path):
     assert (root / "artifacts" / "xdebug" / ".gitkeep").exists()
     assert (root / "artifacts" / "dns" / "dns.log").exists()      # untouched
     assert (root / "artifacts" / "pcap" / "s.pcap00").exists()    # untouched
+
+
+def test_adopt_wraps_loose_file_as_plugin(tmp_path):
+    src = tmp_path / "1.php"
+    src.write_text("<?php\nadd_action('init', 'x');\n")
+    d = stage.adopt(str(tmp_path), str(src), "FIO-1")
+    assert d == os.path.join(str(tmp_path), ".kadath", "adopt", "FIO-1")
+    wrapper = open(os.path.join(d, stage.ADOPT_WRAPPER)).read()
+    assert "Plugin Name: kadath-adopted FIO-1" in wrapper
+    assert wrapper.index("kadath-shims.php") < wrapper.index("'/sample.php'")
+    assert open(os.path.join(d, stage.ADOPT_SHIMS)).read().startswith("<?php")
+    assert open(os.path.join(d, stage.ADOPT_SAMPLE)).read() == src.read_text()
+    assert not os.path.exists(os.path.join(d, "1.php"))
+    assert detect.detect(d).type == "plugin"
+    # re-adopting replaces the directory cleanly
+    (tmp_path / ".kadath" / "adopt" / "FIO-1" / "stale").write_text("x")
+    stage.adopt(str(tmp_path), str(src), "FIO-1")
+    assert not os.path.exists(os.path.join(d, "stale"))
+
+
+def test_adopt_never_interpolates_the_filename(tmp_path):
+    evil = tmp_path / "x'; system($_GET[0]); #.php"
+    evil.write_text("<?php echo 1;\n")
+    d = stage.adopt(str(tmp_path), str(evil), "FIO-2")
+    wrapper = open(os.path.join(d, stage.ADOPT_WRAPPER)).read()
+    assert "system(" not in wrapper and "'/sample.php'" in wrapper
+    # a sample named like our reserved files is not overwritten
+    clash = tmp_path / stage.ADOPT_SHIMS
+    clash.write_text("<?php echo 'i am the sample';\n")
+    d = stage.adopt(str(tmp_path), str(clash), "FIO-3")
+    assert open(os.path.join(d, stage.ADOPT_SAMPLE)).read() == clash.read_text()
+    assert "i am the sample" not in open(os.path.join(d, stage.ADOPT_SHIMS)).read()
+
+
+def test_adopt_defers_the_sample_to_plugins_loaded(tmp_path):
+    src = tmp_path / "frag.php"
+    src.write_text("<?php\nwp_footer();\n")
+    d = stage.adopt(str(tmp_path), str(src), "FIO-4")
+    w = open(os.path.join(d, stage.ADOPT_WRAPPER)).read()
+    assert "add_action('plugins_loaded'" in w
+    assert w.index("kadath-shims.php") < w.index("add_action('plugins_loaded'") < w.index("'/sample.php'")

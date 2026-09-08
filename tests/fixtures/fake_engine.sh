@@ -17,5 +17,5 @@ cat > "$REP/summary.json" <<JSON
  "network":{"dns":[],"flows":[],"dropped":[]},
  "artifacts":{"traces":[],"sp_dumps":[],"pcaps":[]},"warnings":[]}
 JSON
-echo '{"sample":{"filename":"x.php"},"indicators":[{"type":"wp_user","value":"sys_maint"}]}' > "$REP/iocs.json"
+echo '{"sample":{"filename":"x.php"},"offered_utc":"2026-09-05T00:00:00Z","classification":"wp-sample/unknown","network":{"observed":false},"indicators":[{"type":"wp_user","value":"sys_maint"}]}' > "$REP/iocs.json"
 echo "$REP/summary.json"

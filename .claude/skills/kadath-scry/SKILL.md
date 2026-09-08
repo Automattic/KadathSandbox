@@ -54,6 +54,14 @@ Write all three into `$RUN`:
 
 Then confirm the run's evidence is preserved: the `bin/kadath offer` engine bundles it (traces gzipped) into `$RUN/artifacts/`; a hand-staged run needs `make snapshot`. To read a gzipped trace from a bundle, `zcat $RUN/artifacts/xdebug/*.xt.gz | ...`. `artifacts/` itself holds only the current run — the engine clears prior traces each run.
 
+## Batch, without an agent in the loop
+
+For a whole library, `bin/kadath pilgrimage <for-later-review-dir>` runs this
+same procedure with a local Ollama model: static judgment → offer → agentic
+re-examination of ambers, with results beside each case under `<case>/kadath/`
+and a resumable `kadath-triage.csv`. See `README.md` ("The Pilgrimage") and
+`LORE.md`. Its per-case `report.md` follows the template in `references/`.
+
 ## Red flags — stop
 
 - Grepping `artifacts/` without `-newermt @$RUN_EPOCH` or an equivalent timestamp filter → you are mixing runs. Re-scope.
