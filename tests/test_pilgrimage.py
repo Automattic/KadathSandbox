@@ -89,12 +89,21 @@ def test_free_gb(tmp_path):
 
 
 def test_settled_gate():
-    assert pilgrimage._settled({"decided_by": "agree", "verdict": "green"})
-    assert pilgrimage._settled({"decided_by": "agree", "verdict": "red", "confidence": 0.6})
-    assert not pilgrimage._settled({"decided_by": "agree", "verdict": "red", "confidence": 0.59})
-    assert not pilgrimage._settled({"decided_by": "agree", "verdict": "amber", "confidence": 0.99})
-    assert not pilgrimage._settled({"decided_by": "deterministic", "verdict": "red", "confidence": 0.99})
-    assert not pilgrimage._settled({"decided_by": "model", "verdict": "green", "confidence": 0.99})
+    red = {"verdict": "red", "cavern_verdict": "red", "model_verdict": "red",
+           "deterministic": {"level": "green"}, "confidence": 0.9, "coverage": "full"}
+    assert pilgrimage._settled(red)
+    assert pilgrimage._settled(dict(red, coverage="errored"))          # agreed red needs no scry
+    assert pilgrimage._settled(dict(red, deterministic={"level": "red"}))
+    assert not pilgrimage._settled(dict(red, confidence=0.59))
+    assert not pilgrimage._settled(dict(red, model_verdict="green"))    # cavern/model disagree
+    assert not pilgrimage._settled(dict(red, verdict="amber", cavern_verdict="amber", model_verdict="amber"))
+    green = {"verdict": "green", "cavern_verdict": "green", "model_verdict": "green",
+             "deterministic": {"level": "green"}, "confidence": 0.9, "coverage": "full"}
+    assert pilgrimage._settled(green)
+    assert not pilgrimage._settled(dict(green, deterministic={"level": "amber"}, verdict="amber"))
+    assert not pilgrimage._settled(dict(green, cavern_verdict=None, model_verdict="green", coverage="errored"))
+    # no cavern recorded (hand-offered): model and deterministic decide
+    assert pilgrimage._settled(dict(green, cavern_verdict=None))
 
 
 def _lib_case(lib, cid, fname="s.php"):
@@ -156,9 +165,15 @@ def test_main_offer_routes_to_scry_or_settles(tmp_path, monkeypatch):
     m.flush()
 
     offer_results = {
-        "A": {"verdict": "red", "confidence": 0.9, "coverage": "full", "run_dir": "/r/A", "decided_by": "agree"},
-        "B": {"verdict": "red", "confidence": 0.9, "coverage": "full", "run_dir": "/r/B", "decided_by": "deterministic"},
-        "C": {"verdict": "amber", "confidence": 0.5, "coverage": "full", "run_dir": "/r/C", "decided_by": "agree"},
+        # A: Cavern and model agree red, deterministic quiet -> settled red
+        "A": {"verdict": "red", "confidence": 0.9, "coverage": "full", "run_dir": "/r/A", "decided_by": "cavern",
+              "cavern_verdict": "red", "model_verdict": "red", "deterministic": {"level": "green"}},
+        # B: deterministic red against a green Cavern and model -> scry
+        "B": {"verdict": "red", "confidence": 0.9, "coverage": "full", "run_dir": "/r/B", "decided_by": "deterministic",
+              "cavern_verdict": "green", "model_verdict": "green", "deterministic": {"level": "red"}},
+        # C: amber never settles
+        "C": {"verdict": "amber", "confidence": 0.5, "coverage": "full", "run_dir": "/r/C", "decided_by": "agree",
+              "cavern_verdict": "amber", "model_verdict": "amber", "deterministic": {"level": "amber"}},
     }
 
     def fake_offer(case, row, client, root, prompts_dir, engine_cmd):
@@ -215,7 +230,9 @@ def test_main_scry_skips_red_confident_inside_pass(tmp_path, monkeypatch):
     m.flush()
     kd = lib / "A" / "kadath"
     kd.mkdir(parents=True)
-    (kd / "verdict.json").write_text(json.dumps({"decided_by": "agree", "verdict": "red", "confidence": 0.9}))
+    (kd / "verdict.json").write_text(json.dumps({"verdict": "red", "cavern_verdict": "red", "model_verdict": "red",
+                                                 "deterministic": {"level": "green"}, "confidence": 0.9,
+                                                 "coverage": "errored", "decided_by": "cavern"}))
 
     monkeypatch.setattr(pilgrimage, "_make_client", _fake_client)
     calls = []
@@ -273,12 +290,12 @@ def test_main_warns_on_unknown_case(tmp_path, monkeypatch, capsys):
     assert "warning: case(s) not in library: NOPE" in capsys.readouterr().err
 
 
-def test_settled_requires_full_coverage():
-    base = {"decided_by": "agree", "verdict": "green", "confidence": 0.9}
+def test_settled_green_requires_full_coverage():
+    base = {"verdict": "green", "cavern_verdict": "green", "model_verdict": "green",
+            "deterministic": {"level": "green"}, "confidence": 0.9}
     assert pilgrimage._settled(dict(base, coverage="full"))
     for cov in ("stubbed", "unauthenticated", "errored"):
         assert not pilgrimage._settled(dict(base, coverage=cov))
-    assert not pilgrimage._settled(dict(base, verdict="red", coverage="stubbed"))
 
 
 def test_run_pass_breaker_ignores_sample_failures(tmp_path):

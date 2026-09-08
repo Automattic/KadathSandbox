@@ -155,7 +155,9 @@ def run(case, row, client, prompts_dir):
              f"coverage {v.get('coverage')}; dependency stubs created: "
              f"{len(v.get('stubs') or [])} (the sample ran against empty stand-ins for those files, "
              "so behaviour that depended on them was not exercised).\n"
-             "Deterministic reasons:\n```json\n"
+             + (("Fatal lines from this run:\n```text\n" + "\n".join(v.get("fatals") or []) + "\n```\n")
+                if v.get("fatals") else "")
+             + "Deterministic reasons:\n```json\n"
              f"{json.dumps(v['deterministic'].get('reasons', []))}\n```\n"
              "Investigate with the tools, then say you are done.")
     msgs = [{"role": "system", "content": system}, {"role": "user", "content": intro}]

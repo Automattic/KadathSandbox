@@ -194,3 +194,23 @@ def test_prescan_adopted_layout_keeps_shims_first(tmp_path):
     assert made == [{"path": "/samples/plugins/FIO-9/inc/a.php", "kind": "include", "round": 0}]
     assert files == [str(staged / "inc" / "a.php")]
     assert stubs.prescan(str(root / "nope.php"), str(staged), str(root)) == ([], [])
+
+
+def test_is_fatal_and_fatal_lines():
+    parse = "[08-Sep-2026 11:10:36 UTC] PHP Parse error:  syntax error, unexpected token in /samples/plugins/X/sample.php on line 222"
+    core = "[08-Sep-2026 10:38:27 UTC] PHP Fatal error:  Uncaught Error: Call to undefined function is_user_logged_in() in /var/www/html/wp-includes/admin-bar.php:1448"
+    warn = "[08-Sep-2026 10:38:27 UTC] PHP Warning:  something"
+    assert stubs.is_fatal(parse) and stubs.is_fatal(core) and not stubs.is_fatal(warn)
+    assert stubs.fatal_lines([warn, core, parse, FATAL_REQ]) == [parse, FATAL_REQ]   # sample frames preferred
+    assert stubs.fatal_lines([warn, core]) == [core]
+    assert stubs.fatal_lines([warn]) == []
+
+
+def test_stub_rounds_treats_parse_error_as_fatal(tmp_path):
+    root = tmp_path
+    (root / "samples" / "webroot").mkdir(parents=True)
+    log = root / "artifacts" / "php" / "php-error.log"
+    log.parent.mkdir(parents=True)
+    log.write_text("[08-Sep-2026 11:10:36 UTC] PHP Parse error:  syntax error in /samples/webroot/s.php on line 2\n")
+    made, fatal = stubs.stub_rounds(str(root), str(log), 0, lambda: None)
+    assert made == [] and fatal is True

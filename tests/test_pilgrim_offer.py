@@ -337,3 +337,13 @@ def test_run_saves_engine_stderr_on_failure(tmp_path, monkeypatch):
     with pytest.raises(po.EngineError):
         po.run(case, {"case_id": "FIO-7"}, FakeClient(GOOD_VERDICT, []), str(root), PROMPTS, [str(eng)])
     assert "unexpected output" in open(os.path.join(case.dir, "kadath", "engine-stderr.txt")).read()
+
+
+def test_run_model_errored_claim_yields_to_engine(tmp_path, monkeypatch):
+    v, client = _run_with_meta(tmp_path, monkeypatch, {"stubs": [], "fatal": False, "fatals": []},
+                               {"verdict": "green"}, model_coverage="errored")
+    assert v["coverage"] == "full" and v["fatals"] == []
+    line = "[08-Sep-2026 10:29:22 UTC] PHP Fatal error:  Uncaught ValueError: Path cannot be empty in /samples/plugins/x/sample.php:182"
+    v, client = _run_with_meta(tmp_path, monkeypatch, {"stubs": [], "fatal": True, "fatals": [line]}, {"verdict": "red"})
+    assert v["coverage"] == "errored" and v["fatals"] == [line]
+    assert "Path cannot be empty" in client.calls[0][0][1]["content"]     # the model sees the fatal line

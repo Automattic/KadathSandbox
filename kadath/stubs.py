@@ -20,6 +20,17 @@ _FUNC_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 STUB_HEADER = "<?php // kadath stub: missing dependency, created by the Offering\n"
 
 
+def is_fatal(line):
+    return "PHP Fatal error" in line or "PHP Parse error" in line
+
+
+def fatal_lines(lines, limit=3):
+    """The last `limit` fatal/parse-error lines, sample frames preferred."""
+    fat = [l for l in lines if is_fatal(l)]
+    sample = [l for l in fat if "/samples/" in l]
+    return (sample or fat)[-limit:]
+
+
 def new_lines(path, offset):
     try:
         with open(path, "r", errors="replace") as f:
@@ -141,7 +152,7 @@ def prescan(scan_file, base_dir, root):
     return made, files
 
 
-def stub_rounds(root, err_log, err_off, retrigger, max_rounds=3, stub_files=None):
+def stub_rounds(root, err_log, err_off, retrigger, max_rounds=5, stub_files=None):
     """Read the fatals the last trigger produced, stub what is missing, and
     trigger again — up to max_rounds times. stub_files are host paths of stubs
     already written (the engine's static pre-scan), so a function the pre-scan's
@@ -158,7 +169,7 @@ def stub_rounds(root, err_log, err_off, retrigger, max_rounds=3, stub_files=None
             offset = os.path.getsize(err_log)
         except OSError:
             offset = 0
-        fatal = any("PHP Fatal error" in l for l in lines)
+        fatal = any(is_fatal(l) for l in lines)
         if not fatal:
             return made, False
         acted = False
@@ -184,4 +195,4 @@ def stub_rounds(root, err_log, err_off, retrigger, max_rounds=3, stub_files=None
             return made, True
         retrigger()
     lines = new_lines(err_log, offset)
-    return made, any("PHP Fatal error" in l for l in lines)
+    return made, any(is_fatal(l) for l in lines)

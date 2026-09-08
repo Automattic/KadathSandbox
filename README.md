@@ -146,8 +146,10 @@ Three passes, each resumable from `kadath-triage.csv`:
    The Offering runs with `--stub-missing`, and the final verdict is the highest
    of the Cavern's, the deterministic, and the model's. A run whose `coverage`
    is not `full` — `stubbed` (ran against empty stand-ins), `unauthenticated`
-   (never got its password), `errored` (fataled) — can never settle a case:
-   runtime silence is not evidence there, so it goes to the Scry.
+   (never got its password), `errored` (fataled) — cannot settle a green:
+   runtime silence is not evidence. A case is settled when the Cavern and the
+   model agree and the deterministic layer does not exceed them; everything
+   else — amber, a disagreement, an unexercised green — goes to the Scry.
 3. **Scry** — ambers, low-confidence reds, and every disagreement get an agentic
    re-examination with read-only tools; every claim must quote a tool result
    verbatim or it is dropped, and it never lowers a deterministic verdict.

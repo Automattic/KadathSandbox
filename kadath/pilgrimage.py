@@ -102,13 +102,25 @@ def _case_by_id(cases):
 
 
 def _settled(v):
-    """True when an Offering verdict needs no Deep Scrying: every side agreed,
-    the detonation exercised the sample (coverage full), and it is green or a
-    red with confidence >= 0.6. A stubbed, unauthenticated, or errored run
-    cannot settle anything — runtime silence is not evidence there."""
-    if v.get("decided_by") != "agree" or v.get("coverage", "full") != "full":
+    """True when an Offering verdict needs no Deep Scrying. Amber never settles.
+    The Cavern and the model must agree, the deterministic layer must not
+    contradict them (a runtime red against a model green), and the model
+    must be confident. A red so agreed is settled
+    even if the run errored — a Deep Scrying cannot add runtime evidence that
+    the run did not produce. A green settles only when the sample really ran
+    (coverage full): runtime silence is not evidence."""
+    level = v["verdict"]
+    if level == "amber":
         return False
-    return v["verdict"] == "green" or (v["verdict"] == "red" and v.get("confidence", 0) >= 0.6)
+    cav, mv = v.get("cavern_verdict"), v.get("model_verdict")
+    det = (v.get("deterministic") or {}).get("level", "green")
+    if cav is not None and cav != mv:
+        return False
+    # the deterministic layer contradicting the model (an admin created that
+    # the model called green) is exactly what the Deep Scrying is for
+    if pilgrim_offer.ORDER[det] > pilgrim_offer.ORDER[mv or level] or v.get("confidence", 0) < 0.6:
+        return False
+    return level == "red" or v.get("coverage") == "full"
 
 
 def main(argv):

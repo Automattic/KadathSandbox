@@ -152,7 +152,8 @@ def evidence_pack(summary, cav, det, trace_text, bodies):
              _fence("SAMPLE", json.dumps(summary.get("sample", {})), "json"),
              _fence("DEPENDENCY STUBS (empty stand-ins created so the sample could run)",
                     json.dumps({"adopted_as_plugin": summary.get("run", {}).get("adopted", False),
-                                "stubs": summary.get("run", {}).get("stubs", [])}), "json"),
+                                "stubs": summary.get("run", {}).get("stubs", []),
+                                "fatal_lines": summary.get("run", {}).get("fatals", [])}), "json"),
              _fence("DB DIFF", json.dumps(summary.get("db_diff", {}), indent=1), "json"),
              _fence("DANGEROUS CALLS REACHED", json.dumps(summary.get("dangerous_calls", [])), "json"),
              _fence("FILES WRITTEN", json.dumps(summary.get("files_written", [])), "json"),
@@ -222,8 +223,10 @@ def run(case, row, client, root, prompts_dir, engine_cmd):
         coverage = "errored"
     elif cav.get("needs_input", "none") not in ("none",) and coverage in ("full", "stubbed"):
         coverage = "unauthenticated"
-    elif stubs_made and coverage == "full":
+    elif stubs_made and coverage in ("full", "errored"):
         coverage = "stubbed"
+    elif coverage == "errored":
+        coverage = "full"          # the engine saw no fatal; the model's claim does not stand
     level, decided_by = final_verdict(det["level"], mv["verdict"], cav.get("verdict"))
 
     sys_r, sha_r = load_prompt(prompts_dir, "offer_report")
@@ -266,6 +269,7 @@ def run(case, row, client, root, prompts_dir, engine_cmd):
     out = {"verdict": level, "decided_by": decided_by, "confidence": mv["confidence"],
            "deterministic": det, "model_verdict": mv["verdict"], "cavern_verdict": cav.get("verdict"),
            "coverage": coverage, "stubs": stubs_made, "adopted": run_meta.get("adopted", False),
+           "fatals": run_meta.get("fatals", []),
            "iocs_extra": mv["iocs_extra"], "persistence": mv["persistence"], "reason": mv["reason"],
            "yara": yara_status, "run_dir": run_dir, "model": client.model,
            "sampling": dict(client.profiles["offer"]),

@@ -125,3 +125,12 @@ def test_adopt_never_interpolates_the_filename(tmp_path):
     d = stage.adopt(str(tmp_path), str(clash), "FIO-3")
     assert open(os.path.join(d, stage.ADOPT_SAMPLE)).read() == clash.read_text()
     assert "i am the sample" not in open(os.path.join(d, stage.ADOPT_SHIMS)).read()
+
+
+def test_adopt_defers_the_sample_to_plugins_loaded(tmp_path):
+    src = tmp_path / "frag.php"
+    src.write_text("<?php\nwp_footer();\n")
+    d = stage.adopt(str(tmp_path), str(src), "FIO-4")
+    w = open(os.path.join(d, stage.ADOPT_WRAPPER)).read()
+    assert "add_action('plugins_loaded'" in w
+    assert w.index("kadath-shims.php") < w.index("add_action('plugins_loaded'") < w.index("'/sample.php'")

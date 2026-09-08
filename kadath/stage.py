@@ -68,7 +68,11 @@ def adopt(root, sample_path, slug):
         f.write("<?php\n/*\nPlugin Name: kadath-adopted " + slug + "\n"
                 "Description: KadathSandbox wrapper - a loose PHP file adopted as a plugin so WordPress is loaded beneath it.\n*/\n"
                 f"require_once __DIR__ . '/{ADOPT_SHIMS}';\n"
-                f"require_once __DIR__ . '/{ADOPT_SAMPLE}';\n")
+                "// deferred: pluggable functions (is_user_logged_in, wp_mail, ...) load after\n"
+                "// the plugin files, so a fragment that calls them at load time would fatal\n"
+                "add_action('plugins_loaded', function () {\n"
+                f"    require_once __DIR__ . '/{ADOPT_SAMPLE}';\n"
+                "}, 0);\n")
     return d
 
 

@@ -355,7 +355,8 @@ def offer(argv):
             made, fatal = stubs.stub_rounds(ROOT, err_log, err_off, _retrigger, stub_files=stub_files)
             made_stubs.extend(made)
         else:
-            fatal = any("PHP Fatal error" in l for l in stubs.new_lines(err_log, err_off))
+            fatal = any(stubs.is_fatal(l) for l in stubs.new_lines(err_log, err_off))
+        fatals = stubs.fatal_lines(stubs.new_lines(err_log, err_off))
 
         # collect
         after = _dbstate()
@@ -380,7 +381,7 @@ def offer(argv):
                        "type": det.type}
         run_meta = {"epoch": epoch, "utc": iso, "slug": det.slug,
                     "trigger_actions": session.actions, "reset": a.reset,
-                    "stubs": made_stubs, "fatal": fatal, "adopted": adopted}
+                    "stubs": made_stubs, "fatal": fatal, "fatals": fatals, "adopted": adopted}
         creds = _credentials_from_trace(traces)
         s = summary.build_summary(
             sample_meta, run_meta, db_diff, traceparse.callchain(traces),
