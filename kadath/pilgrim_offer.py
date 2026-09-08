@@ -183,6 +183,31 @@ def _fatal_in_run(run_dir):
     return False
 
 
+def _finish_from_runes(kd, cav, runes_read, stderr, client):
+    """The Offering could not run the sample; record a verdict from the Runes'
+    static read (coverage errored) so the broken-sample loop ends here."""
+    static = {"cavern": cav.get("verdict") or "green", "runes": runes_read["verdict"]}
+    level = max(static.values(), key=lambda x: ORDER[x])
+    decided = "runes" if ORDER[static["runes"]] == ORDER[level] else "cavern"
+    fatals = [l for l in stderr.splitlines() if "Fatal" in l or "Parse error" in l][-3:]
+    out = {"verdict": level, "decided_by": decided, "confidence": runes_read.get("confidence", 0.5),
+           "deterministic": {"level": "green", "reasons": []}, "model_verdict": None,
+           "cavern_verdict": cav.get("verdict"), "runes_verdict": runes_read["verdict"],
+           "coverage": "errored", "stubs": [], "adopted": False, "fatals": fatals,
+           "iocs_extra": runes_read.get("iocs_extra", []), "persistence": runes_read.get("persistence", []),
+           "reason": "engine could not run the sample; verdict from the Runes static read. "
+                     + runes_read.get("reason", "")[:300],
+           "yara": "runes-only", "run_dir": "", "model": client.model,
+           "sampling": dict(client.profiles["offer"]), "prompt_sha256": {}, "at": manifest.now_iso()}
+    with open(os.path.join(kd, "verdict.json"), "w") as f:
+        json.dump(out, f, indent=2)
+    with open(os.path.join(kd, "report.md"), "w") as f:
+        f.write("# Offering - sample would not run\n\nThe detonation fataled before the sample "
+                "could act; the verdict is the Runes static read of the (deobfuscated) code.\n\n"
+                + "**Verdict:** " + level + " (" + decided + ").  " + out["reason"] + "\n")
+    return out
+
+
 def run(case, row, client, root, prompts_dir, engine_cmd):
     kd = os.path.join(case.dir, "kadath")
     os.makedirs(kd, exist_ok=True)
@@ -201,6 +226,10 @@ def run(case, row, client, root, prompts_dir, engine_cmd):
     except EngineError as e:
         with open(os.path.join(kd, "engine-stderr.txt"), "w") as f:
             f.write(e.stderr)
+        # the sample would not run at all; if the Runes read it statically, they
+        # decide (coverage errored) instead of the case being stuck as an error row
+        if runes_read and runes_read.get("verdict"):
+            return _finish_from_runes(kd, cav, runes_read, e.stderr, client)
         raise
     run_dir = os.path.dirname(summary_path)
     with open(summary_path) as f:

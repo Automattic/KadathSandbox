@@ -40,8 +40,17 @@ class Manifest:
             if unknown or list(fields) != [c for c in COLUMNS if c in fields]:
                 raise ValueError(f"{self.path}: unexpected manifest columns {fields}; "
                                  f"expected a subset of {COLUMNS} in order")
+            if not fields and os.path.getsize(self.path) > 0:
+                raise ValueError(f"{self.path}: manifest has no header row")
             for r in reader:
-                self.rows[r["case_id"]] = {c: r.get(c, "") or "" for c in COLUMNS}
+                row = {c: r.get(c, "") or "" for c in COLUMNS}
+                # a row from a pre-runes schema has runes_status ""; make it
+                # resumable — a worthy done-cavern row is pending for the runes
+                # pass, a skipped/non-worthy one stays skipped
+                if row["runes_status"] == "":
+                    row["runes_status"] = ("skipped" if row["cavern_status"] == "skipped"
+                                           or row["cavern_worthy"] == "false" else "pending")
+                self.rows[r["case_id"]] = row
 
     def ensure_rows(self, cases):
         for c in cases:

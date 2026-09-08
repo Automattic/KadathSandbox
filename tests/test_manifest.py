@@ -146,9 +146,10 @@ def test_load_accepts_older_shorter_schema(tmp_path):
                                             "cavern_worthy": "true", "offer_status": "pending"})
     m = manifest.Manifest(str(p))
     m.load()
-    assert m.rows["A"]["runes_status"] == "" and m.rows["A"]["cavern_status"] == "done"
-    # a newly-added runes row flows through pending once its status is set
-    m.update("A", runes_status="pending")
+    # the runes column was absent on disk; load backfills it so the worthy
+    # done-cavern row resumes into the runes pass with no manual intervention
+    assert m.rows["A"]["cavern_status"] == "done"
+    assert m.rows["A"]["runes_status"] == "pending"
     assert [r["case_id"] for r in m.pending("runes")] == ["A"]
 
 
@@ -160,3 +161,20 @@ def test_load_rejects_unknown_column(tmp_path):
     import pytest
     with pytest.raises(ValueError):
         manifest.Manifest(str(p)).load()
+
+
+def test_load_backfills_runes_status_so_old_rows_resume(tmp_path):
+    old = [c for c in manifest.COLUMNS if not c.startswith("runes_")]
+    p = tmp_path / "old.csv"
+    with open(p, "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=old)
+        w.writeheader()
+        base = {c: "" for c in old}
+        w.writerow({**base, "case_id": "W", "cavern_status": "done", "cavern_worthy": "true", "offer_status": "pending"})
+        w.writerow({**base, "case_id": "N", "cavern_status": "done", "cavern_worthy": "false", "offer_status": "skipped"})
+        w.writerow({**base, "case_id": "S", "cavern_status": "skipped", "offer_status": "skipped"})
+    m = manifest.Manifest(str(p))
+    m.load()
+    # a worthy pre-runes row is now resumable into the runes pass with no manual poke
+    assert [r["case_id"] for r in m.pending("runes")] == ["W"]
+    assert m.rows["N"]["runes_status"] == "skipped" and m.rows["S"]["runes_status"] == "skipped"

@@ -16,6 +16,7 @@ Follow this structure exactly, filling every section (write "none observed and n
 ## Hiding / evasion
 ## Network activity — distinguish sample traffic from WordPress core's own api.wordpress.org calls.
 ## Indicators of Compromise — a table: type | value | notes.
+## Runes (static deobfuscation) - if the evidence has a RUNES section, summarise what the statically-unpacked layers revealed and the Runes' verdict; otherwise write "no static deobfuscation was needed".
 ## Detection notes for defenders
 ## Caveats — what the detonation did not exercise (see coverage), attribution limits.
 

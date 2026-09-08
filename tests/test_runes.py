@@ -127,3 +127,39 @@ def test_schema_rejects_bad_family_and_verdict():
         with pytest.raises(ValueError):
             llm.validate_against(runes.SCHEMA, bad)
     llm.validate_against(runes.SCHEMA, GOOD)
+
+
+def test_unpack_is_not_catastrophic_on_hostile_backslashes():
+    import signal
+    signal.signal(signal.SIGALRM, lambda *a: (_ for _ in ()).throw(TimeoutError()))
+    signal.alarm(5)
+    try:
+        assert runes.unpack("<?php eval(base64_decode('" + "\\" * 90) == []
+    finally:
+        signal.alarm(0)
+
+
+def test_unpack_rejects_decompression_bomb_within_cap():
+    import zlib, signal
+    big = b"A" * (40 * 1024 * 1024)
+    co = zlib.compressobj(9, zlib.DEFLATED, -15)
+    bomb = co.compress(big) + co.flush()
+    b64 = base64.b64encode(bomb).decode()
+    signal.signal(signal.SIGALRM, lambda *a: (_ for _ in ()).throw(TimeoutError()))
+    signal.alarm(10)
+    try:
+        assert runes.unpack(f"<?php eval(gzinflate(base64_decode('{b64}')));") == []
+    finally:
+        signal.alarm(0)
+
+
+def test_truncated_gzip_does_not_raise():
+    # a truncated gzip stream decodes partially via decompressobj (better than
+    # crashing); a blob that is not a gzip stream at all just ends the chain
+    import zlib
+    co = zlib.compressobj(9, zlib.DEFLATED, 31)
+    full = co.compress(b"<?php echo 1;") + co.flush()
+    b64 = base64.b64encode(full[:len(full) // 2]).decode()
+    out = runes.unpack(f"<?php eval(gzdecode(base64_decode('{b64}')));")   # must not raise
+    assert isinstance(out, list)
+    assert runes.unpack("<?php eval(gzdecode(base64_decode('bm90IGd6aXAgYXQgYWxs')));") == []

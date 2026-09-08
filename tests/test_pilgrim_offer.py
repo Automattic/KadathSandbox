@@ -347,3 +347,28 @@ def test_run_model_errored_claim_yields_to_engine(tmp_path, monkeypatch):
     v, client = _run_with_meta(tmp_path, monkeypatch, {"stubs": [], "fatal": True, "fatals": [line]}, {"verdict": "red"})
     assert v["coverage"] == "errored" and v["fatals"] == [line]
     assert "Path cannot be empty" in client.calls[0][0][1]["content"]     # the model sees the fatal line
+
+
+def test_run_falls_back_to_runes_when_engine_cannot_run(tmp_path, monkeypatch):
+    case, root, eng = _setup(tmp_path)
+    eng.write_text("#!/bin/sh\necho 'PHP Parse error: syntax error in /samples/x.php on line 2' >&2\nexit 1\n")
+    monkeypatch.setattr(po, "flow_bodies", lambda root, epoch: ([], None))
+    kd = os.path.join(case.dir, "kadath")
+    json.dump({"verdict": "red", "family": "backdoor", "confidence": 0.8,
+               "iocs_extra": [{"type": "url", "value": "http://evil.test"}], "persistence": ["cron"],
+               "reason": "static payload decodes to a shell"}, open(os.path.join(kd, "runes.json"), "w"))
+    v = po.run(case, {"case_id": "FIO-7"}, FakeClient(GOOD_VERDICT, []), str(root), PROMPTS, [str(eng)])
+    assert v["coverage"] == "errored" and v["verdict"] == "red" and v["decided_by"] == "runes"
+    assert v["model_verdict"] is None and v["runes_verdict"] == "red"
+    disk = json.load(open(os.path.join(kd, "verdict.json")))
+    assert disk["verdict"] == "red" and disk["yara"] == "runes-only"
+    assert "would not run" in open(os.path.join(kd, "report.md")).read()
+
+
+def test_run_engine_error_without_runes_still_raises(tmp_path, monkeypatch):
+    case, root, eng = _setup(tmp_path)
+    eng.write_text("#!/bin/sh\necho boom >&2\nexit 1\n")
+    monkeypatch.setattr(po, "flow_bodies", lambda root, epoch: ([], None))
+    # no runes.json present -> the loop-breaker path (error row) must still fire
+    with pytest.raises(po.EngineError):
+        po.run(case, {"case_id": "FIO-7"}, FakeClient(GOOD_VERDICT, []), str(root), PROMPTS, [str(eng)])

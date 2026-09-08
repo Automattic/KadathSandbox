@@ -114,10 +114,7 @@ def _settled(v):
     if level == "amber":
         return False
     votes = [v.get(k) for k in ("cavern_verdict", "runes_verdict", "model_verdict") if v.get(k)]
-    if any(x != level for x in votes):          # a static/model read dissents -> scry
-        return False
-    det = (v.get("deterministic") or {}).get("level", "green")
-    if pilgrim_offer.ORDER[det] > pilgrim_offer.ORDER[level]:   # runtime says more -> scry
+    if any(x != level for x in votes):          # any static/model read dissents -> scry
         return False
     if v.get("confidence", 0) < 0.6:
         return False

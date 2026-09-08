@@ -6,7 +6,6 @@ is the deciding tier when the Offering cannot run the sample at all."""
 import base64
 import binascii
 import codecs
-import gzip
 import hashlib
 import json
 import os
@@ -30,8 +29,16 @@ def _b64(b):
     return base64.b64decode(b, validate=True)
 
 
-def _gzinflate(b):
-    return zlib.decompress(b, -15)
+def _bounded_inflate(wbits):
+    """zlib / gzip / raw-deflate decode that never materialises more than
+    LAYER_CAP bytes — a decompression bomb is rejected, not expanded first."""
+    def f(b):
+        d = zlib.decompressobj(wbits)
+        out = d.decompress(b, LAYER_CAP + 1)
+        if len(out) > LAYER_CAP or d.unconsumed_tail:
+            raise ValueError("decompressed output exceeds LAYER_CAP")
+        return out
+    return f
 
 
 def _rot13(b):
@@ -41,9 +48,9 @@ def _rot13(b):
 # php decoder name -> pure Python transform on bytes (never executes sample code)
 DECODERS = {
     "base64_decode": _b64,
-    "gzinflate": _gzinflate,
-    "gzuncompress": zlib.decompress,
-    "gzdecode": gzip.decompress,
+    "gzinflate": _bounded_inflate(-15),
+    "gzuncompress": _bounded_inflate(15),
+    "gzdecode": _bounded_inflate(31),
     "str_rot13": _rot13,
     "strrev": lambda b: b[::-1],
     "hex2bin": lambda b: bytes.fromhex(b.decode("latin-1").strip()),
@@ -55,7 +62,7 @@ DECODERS = {
 # <decoder>( <decoder>( ... 'literal' ... ) ) — captures the chain and the literal
 _CHAIN = re.compile(
     r"((?:\b(?:" + "|".join(map(re.escape, DECODERS)) + r")\s*\(\s*)+)"
-    r"(['\"])(?P<lit>(?:\\.|(?!\2).){16,})\2")
+    r"(['\"])(?P<lit>(?:[^'\"\\]|\\.){16,200000})\2")
 _DEC_NAME = re.compile(r"\b(" + "|".join(map(re.escape, DECODERS)) + r")\s*\(")
 
 
@@ -78,7 +85,7 @@ def _apply_chain(names, literal):
             return None
         try:
             data = fn(data)
-        except (binascii.Error, zlib.error, ValueError, OSError, UnicodeError):
+        except (binascii.Error, zlib.error, ValueError, OSError, EOFError, UnicodeError):
             return None
         if len(data) > LAYER_CAP:
             return None
