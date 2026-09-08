@@ -361,7 +361,7 @@ def test_finish_from_runes_records_errored_verdict(tmp_path):
     assert v["model_verdict"] is None and v["runes_verdict"] == "red" and v["cavern_verdict"] == "amber"
     disk = json.load(open(os.path.join(str(kd), "verdict.json")))
     assert disk["verdict"] == "red" and disk["yara"] == "runes-only"
-    assert "would not run" in open(os.path.join(str(kd), "report.md")).read()
+    assert "did not complete" in open(os.path.join(str(kd), "report.md")).read()
     # when the Cavern already outranks the Runes, the Cavern is credited
     v2 = po._finish_from_runes(str(kd), {"verdict": "red"}, dict(runes, verdict="amber"), stderr, client)
     assert v2["verdict"] == "red" and v2["decided_by"] == "cavern"
