@@ -183,12 +183,32 @@ def main(argv):
     def do_offer(row):
         if free_gb(ROOT) < a.min_free_gb:
             raise RuntimeError(f"free disk below {a.min_free_gb} GB; aborting")
+        case = by_id[row["case_id"]]
         try:
-            v = pilgrim_offer.run(by_id[row["case_id"]], row, client, ROOT, PROMPTS, a.engine)
+            v = pilgrim_offer.run(case, row, client, ROOT, PROMPTS, a.engine)
         except pilgrim_offer.EngineError as e:
-            # a per-sample engine failure is an error row; only a sick stack
-            # counts toward the breaker
-            e.stack_healthy = _stack_recover() if not a.no_stack else True
+            # distinguish a broken sample from a broken sandbox: recover the stack
+            # and, only if it was healthy, let the Runes' static read stand in for
+            # the case (coverage errored). A sick stack still raises -> the breaker
+            # counts it, so a systemic outage aborts the pass instead of silently
+            # downgrading every remaining case.
+            healthy = _stack_recover() if not a.no_stack else True
+            kd = os.path.join(case.dir, "kadath")
+            rp = os.path.join(kd, "runes.json")
+            if healthy and os.path.exists(rp):
+                try:
+                    with open(rp) as f:
+                        rr = json.load(f)
+                except (OSError, ValueError):
+                    rr = None
+                if rr and rr.get("verdict"):
+                    with open(os.path.join(kd, "cavern.json")) as f:
+                        cav = json.load(f)
+                    v = pilgrim_offer._finish_from_runes(kd, cav, rr, e.stderr, client)
+                    return {"offer_verdict": v["verdict"], "offer_coverage": v["coverage"],
+                            "run_dir": "", "final_verdict": v["verdict"], "decided_by": v["decided_by"],
+                            "scry_status": "skipped" if _settled(v) else "pending"}
+            e.stack_healthy = healthy
             raise
         fields = {"offer_verdict": v["verdict"], "offer_coverage": v["coverage"], "run_dir": v["run_dir"],
                   "final_verdict": v["verdict"], "decided_by": "offer"}

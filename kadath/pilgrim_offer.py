@@ -226,11 +226,7 @@ def run(case, row, client, root, prompts_dir, engine_cmd):
     except EngineError as e:
         with open(os.path.join(kd, "engine-stderr.txt"), "w") as f:
             f.write(e.stderr)
-        # the sample would not run at all; if the Runes read it statically, they
-        # decide (coverage errored) instead of the case being stuck as an error row
-        if runes_read and runes_read.get("verdict"):
-            return _finish_from_runes(kd, cav, runes_read, e.stderr, client)
-        raise
+        raise      # the orchestrator decides whether the Runes stand in (stack healthy) or this is an outage
     run_dir = os.path.dirname(summary_path)
     with open(summary_path) as f:
         summ = json.load(f)

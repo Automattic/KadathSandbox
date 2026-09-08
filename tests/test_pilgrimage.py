@@ -8,7 +8,9 @@ from kadath.library import Case
 
 
 def _fake_client(a, model=None):
-    return type("C", (), {"preflight": lambda self: None})()
+    from kadath import llm
+    return type("C", (), {"preflight": lambda self: None, "model": "fake",
+                          "profiles": dict(llm.PROFILES)})()
 
 
 def test_parse_args_defaults_and_passes():
@@ -332,3 +334,51 @@ def test_stack_recover_reports_health(monkeypatch):
         return P("")
     monkeypatch.setattr(pilgrimage, "sh", sh)
     assert pilgrimage._stack_recover() is False and ["make", "down"] in calls and ["make", "up"] in calls
+
+
+def test_do_offer_runes_stand_in_on_healthy_stack(tmp_path, monkeypatch):
+    lib = tmp_path / "lib"; _lib_case(lib, "A")
+    cases = pilgrimage.library.walk(str(lib))
+    m = manifest.Manifest(str(lib / "kadath-triage.csv")); m.ensure_rows(cases)
+    m.update("A", cavern_status="done", cavern_worthy="true", runes_status="done"); m.flush()
+    kd = lib / "A" / "kadath"; kd.mkdir(parents=True)
+    (kd / "cavern.json").write_text(json.dumps({"verdict": "amber"}))
+    (kd / "runes.json").write_text(json.dumps({"verdict": "red", "confidence": 0.9,
+                                               "iocs_extra": [], "persistence": [], "reason": "packed shell"}))
+    monkeypatch.setattr(pilgrimage, "_make_client", _fake_client)
+    monkeypatch.setattr(pilgrimage, "free_gb", lambda p: 999.0)
+    monkeypatch.setattr(pilgrimage, "_stack_up", lambda: None)        # don't touch docker
+    monkeypatch.setattr(pilgrimage, "_stack_recover", lambda: True)   # stack healthy
+    def boom(*a, **k):
+        raise pilgrimage.pilgrim_offer.EngineError("PHP Parse error in /samples/x.php")
+    monkeypatch.setattr(pilgrimage.pilgrim_offer, "run", boom)
+    rc = pilgrimage.main([str(lib), "--pass", "offer"])
+    assert rc == 0
+    m2 = manifest.Manifest(str(lib / "kadath-triage.csv")); m2.load()
+    assert m2.rows["A"]["offer_status"] == "done" and m2.rows["A"]["offer_coverage"] == "errored"
+    assert m2.rows["A"]["final_verdict"] == "red" and m2.rows["A"]["decided_by"] == "runes"
+
+
+def test_do_offer_unhealthy_stack_still_errors_and_breaks(tmp_path, monkeypatch):
+    lib = tmp_path / "lib"
+    for cid in ("A", "B"):
+        _lib_case(lib, cid)
+    cases = pilgrimage.library.walk(str(lib))
+    m = manifest.Manifest(str(lib / "kadath-triage.csv")); m.ensure_rows(cases)
+    for cid in ("A", "B"):
+        m.update(cid, cavern_status="done", cavern_worthy="true", runes_status="done")
+        kd = lib / cid / "kadath"; kd.mkdir(parents=True)
+        (kd / "cavern.json").write_text(json.dumps({"verdict": "amber"}))
+        (kd / "runes.json").write_text(json.dumps({"verdict": "red", "confidence": 0.9,
+                                                   "iocs_extra": [], "persistence": [], "reason": "x"}))
+    m.flush()
+    monkeypatch.setattr(pilgrimage, "_make_client", _fake_client)
+    monkeypatch.setattr(pilgrimage, "free_gb", lambda p: 999.0)
+    monkeypatch.setattr(pilgrimage, "_stack_up", lambda: None)         # don't touch docker
+    monkeypatch.setattr(pilgrimage, "_stack_recover", lambda: False)   # stack sick
+    monkeypatch.setattr(pilgrimage.pilgrim_offer, "run",
+                        lambda *a, **k: (_ for _ in ()).throw(pilgrimage.pilgrim_offer.EngineError("down")))
+    rc = pilgrimage.main([str(lib), "--pass", "offer"])
+    # a sick stack must NOT be papered over by the runes fallback: rows error, breaker aborts
+    m2 = manifest.Manifest(str(lib / "kadath-triage.csv")); m2.load()
+    assert m2.rows["A"]["offer_status"] == "error"
