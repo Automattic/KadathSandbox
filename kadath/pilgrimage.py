@@ -186,13 +186,16 @@ def main(argv):
         case = by_id[row["case_id"]]
         try:
             v = pilgrim_offer.run(case, row, client, ROOT, PROMPTS, a.engine)
-        except pilgrim_offer.EngineError as e:
-            # distinguish a broken sample from a broken sandbox: recover the stack
-            # and, only if it was healthy, let the Runes' static read stand in for
-            # the case (coverage errored). A sick stack still raises -> the breaker
-            # counts it, so a systemic outage aborts the pass instead of silently
-            # downgrading every remaining case.
-            healthy = _stack_recover() if not a.no_stack else True
+        except (pilgrim_offer.EngineError, llm.LLMError) as e:
+            # a per-sample failure lets the Runes' static read stand in (coverage
+            # errored), but only if the INFRA is healthy — a broken sandbox
+            # (EngineError) or a down Ollama (LLMError) still raises so the breaker
+            # aborts the pass instead of silently downgrading every remaining case.
+            if isinstance(e, llm.LLMError):
+                healthy = client.reachable()          # transient timeout vs Ollama down
+                e.stderr = str(e)
+            else:
+                healthy = _stack_recover() if not a.no_stack else True
             kd = os.path.join(case.dir, "kadath")
             rp = os.path.join(kd, "runes.json")
             if healthy and os.path.exists(rp):

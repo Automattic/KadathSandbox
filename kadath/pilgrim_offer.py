@@ -195,15 +195,15 @@ def _finish_from_runes(kd, cav, runes_read, stderr, client):
            "cavern_verdict": cav.get("verdict"), "runes_verdict": runes_read["verdict"],
            "coverage": "errored", "stubs": [], "adopted": False, "fatals": fatals,
            "iocs_extra": runes_read.get("iocs_extra", []), "persistence": runes_read.get("persistence", []),
-           "reason": "engine could not run the sample; verdict from the Runes static read. "
+           "reason": "the Offering did not complete (engine or verdict model); verdict from the Runes static read. "
                      + runes_read.get("reason", "")[:300],
            "yara": "runes-only", "run_dir": "", "model": client.model,
            "sampling": dict(client.profiles["offer"]), "prompt_sha256": {}, "at": manifest.now_iso()}
     with open(os.path.join(kd, "verdict.json"), "w") as f:
         json.dump(out, f, indent=2)
     with open(os.path.join(kd, "report.md"), "w") as f:
-        f.write("# Offering - sample would not run\n\nThe detonation fataled before the sample "
-                "could act; the verdict is the Runes static read of the (deobfuscated) code.\n\n"
+        f.write("# Offering - did not complete\n\nThe detonation or the verdict model did not "
+                "complete; the verdict is the Runes static read of the (deobfuscated) code.\n\n"
                 + "**Verdict:** " + level + " (" + decided + ").  " + out["reason"] + "\n")
     return out
 

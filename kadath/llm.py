@@ -130,6 +130,15 @@ class Client:
         self.model = model or os.environ.get("KADATH_MODEL") or DEFAULT_MODEL
         self.profiles = profiles or copy.deepcopy(PROFILES)
 
+    def reachable(self):
+        """True if the Ollama server answers /api/tags — distinguishes a
+        transient per-request timeout from the server being down."""
+        try:
+            _get(f"{self.base_url}/api/tags", timeout=10)
+            return True
+        except LLMError:
+            return False
+
     def preflight(self):
         tags = _get(f"{self.base_url}/api/tags", timeout=10)
         names = [m.get("name") for m in tags.get("models", [])]
