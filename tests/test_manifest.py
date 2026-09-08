@@ -20,7 +20,7 @@ def test_ensure_rows_and_flush_idempotent(tmp_path):
     assert [r["case_id"] for r in rows] == ["B", "A", "C"]
     assert list(rows[0].keys()) == manifest.COLUMNS
     a = next(r for r in rows if r["case_id"] == "A")
-    assert a["cavern_status"] == a["offer_status"] == a["scry_status"] == "skipped"
+    assert a["cavern_status"] == a["runes_status"] == a["offer_status"] == a["scry_status"] == "skipped"
     assert a["error"] == "no-php"
     assert rows[0]["cavern_status"] == "pending" and rows[0]["php"].endswith("b.php")
     m2 = manifest.Manifest(str(tmp_path / "kadath-triage.csv"))
@@ -38,6 +38,9 @@ def test_pending_rules(tmp_path):
     assert m.pending("offer") == []
     m.update("B", cavern_status="done", cavern_worthy="true")
     m.update("C", cavern_status="done", cavern_worthy="false")
+    assert [r["case_id"] for r in m.pending("runes")] == ["B"]     # worthy cavern-done
+    assert m.pending("offer") == []                                # runes not done yet
+    m.update("B", runes_status="done")
     assert [r["case_id"] for r in m.pending("offer")] == ["B"]
     assert m.pending("scry") == []
     m.update("B", offer_status="done", offer_verdict="green")
@@ -115,7 +118,7 @@ def test_load_rejects_unexpected_header(tmp_path):
         m.load()
     p2 = tmp_path / "missing.csv"
     with open(p2, "w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=manifest.COLUMNS[:-1])   # missing a column
+        w = csv.DictWriter(f, fieldnames=["case_id", "size", "sha256"])   # reordered
         w.writeheader()
     m2 = manifest.Manifest(str(p2))
     with pytest.raises(ValueError):
@@ -130,3 +133,30 @@ def test_load_roundtrips_utf8(tmp_path):
     m2 = manifest.Manifest(str(tmp_path / "t.csv"))
     m2.load()
     assert m2.rows["B"]["error"] == "ração ✓"
+
+
+def test_load_accepts_older_shorter_schema(tmp_path):
+    # a manifest written before runes_* existed: same order, missing the new columns
+    old = [c for c in manifest.COLUMNS if not c.startswith("runes_")]
+    p = tmp_path / "old.csv"
+    with open(p, "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=old)
+        w.writeheader()
+        w.writerow({c: "" for c in old} | {"case_id": "A", "cavern_status": "done",
+                                            "cavern_worthy": "true", "offer_status": "pending"})
+    m = manifest.Manifest(str(p))
+    m.load()
+    assert m.rows["A"]["runes_status"] == "" and m.rows["A"]["cavern_status"] == "done"
+    # a newly-added runes row flows through pending once its status is set
+    m.update("A", runes_status="pending")
+    assert [r["case_id"] for r in m.pending("runes")] == ["A"]
+
+
+def test_load_rejects_unknown_column(tmp_path):
+    p = tmp_path / "x.csv"
+    with open(p, "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=list(manifest.COLUMNS) + ["bogus"])
+        w.writeheader()
+    import pytest
+    with pytest.raises(ValueError):
+        manifest.Manifest(str(p)).load()

@@ -20,6 +20,8 @@ PROFILES = {
               "repeat_penalty": 1.05, "seed": 42, "num_ctx": 32768, "num_predict": 4096},
     "deepscry": {"temperature": 0.6, "top_p": 0.95, "top_k": 20, "min_p": 0,
                  "repeat_penalty": 1.05, "num_ctx": 65536, "num_predict": 8192},
+    "runes": {"temperature": 0.1, "top_p": 0.8, "top_k": 20, "min_p": 0,
+              "repeat_penalty": 1.05, "seed": 42, "num_ctx": 32768, "num_predict": 2048},
 }
 
 

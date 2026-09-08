@@ -138,7 +138,13 @@ Three passes, each resumable from `kadath-triage.csv`:
    line ranges, and whether detonation would teach anything a static read cannot.
    The script forces "worthy" on anything using WordPress APIs, network
    primitives, or encoded blobs, and on anything the model is not confident about.
-2. **Offer** — `bin/kadath offer` detonates each worthy case; the model writes
+2. **Runes** — before detonation, the sample is statically deobfuscated (literal
+   `base64`/`gzinflate`/`rot13`/hex chains peeled layer by layer, no code run) and
+   a security-tuned model (default CyberSecQwen-4B) reads the payload. Its verdict
+   enriches the Offering, and *is* the verdict when the Offering cannot run the
+   sample at all — so the tail of broken, un-runnable malware stops looping through
+   the detonator. Writes `runes.json` and `unpacked/layer-*.php`.
+3. **Offer** — `bin/kadath offer` detonates each worthy case; the model writes
    `report.md`, `iocs.json` extras, and `draft.yar` from a compact evidence pack.
    The deterministic verdict travels with it: the model can argue, but never
    lowers it — the higher of the two wins, and any disagreement sends the case
@@ -150,7 +156,7 @@ Three passes, each resumable from `kadath-triage.csv`:
    runtime silence is not evidence. A case is settled when the Cavern and the
    model agree and the deterministic layer does not exceed them; everything
    else — amber, a disagreement, an unexercised green — goes to the Scry.
-3. **Scry** — ambers, low-confidence reds, and every disagreement get an agentic
+4. **Scry** — ambers, low-confidence reds, and every disagreement get an agentic
    re-examination with read-only tools; every claim must quote a tool result
    verbatim or it is dropped, and it never lowers a deterministic verdict.
 
@@ -159,6 +165,7 @@ committed; promotion into the library stays a human PR.
 
 ```bash
 ollama pull orcarouter/Qwen3.8-27B-Uncensored:latest
+ollama pull hf.co/ree2raz/CyberSecQwen-4B-GGUF:Q4_K_M   # the Runes model (override with --runes-model)
 make pilgrimage LIBRARY=~/WORK/jetpack-threat-library/for-later-review PASS=cavern LIMIT=50
 ```
 

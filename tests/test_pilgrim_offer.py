@@ -66,7 +66,7 @@ def test_evidence_pack_contents():
         assert needle in pack
     # A trace excerpt containing ``` cannot close the fence early: the whole pack
     # has exactly 2 fence markers per section (10 sections), no stray ones.
-    assert pack.count("```") == 22  # 11 sections × 2 fence markers
+    assert pack.count("```") == 24  # 12 sections × 2 fence markers (RUNES added)
     # Check that FLOW BODIES section is inside a json fence
     flow_start = pack.find("=== FLOW BODIES")
     flow_end = pack.find("=== ", flow_start + 1)

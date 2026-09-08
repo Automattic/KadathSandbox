@@ -35,6 +35,13 @@ def cavern(mark):
     }.get(mark, {"verdict": "amber", "family": "unknown", "worthy": True}))
 
 
+def runes(mark):
+    fam = {"MARK_RED_WORTHY": "backdoor", "MARK_AMBER": "unknown"}.get(mark, "injector")
+    verdict = "amber" if mark == "MARK_AMBER" else "red"
+    return {"verdict": verdict, "confidence": 0.9, "family": fam, "iocs_extra": [],
+            "persistence": [], "flows": [], "reason": "fixture runes"}
+
+
 def offer_verdict(mark):
     v = "green" if mark == "MARK_AMBER" else "red"   # deterministic is red -> AMBER-1 disagrees -> routed to scry
     return {"verdict": v, "confidence": 0.9, "coverage": "full", "iocs_extra": [], "persistence": [], "reason": "fixture"}
@@ -67,6 +74,8 @@ class H(BaseHTTPRequestHandler):
         mark = _mark(alltext)
         if system.startswith("# The Cavern of Flame"):
             content = json.dumps(cavern(mark))
+        elif system.startswith("# The Runes"):
+            content = json.dumps(runes(mark))
         elif system.startswith("# The Offering — verdict"):
             content = json.dumps(offer_verdict(mark))
         elif system.startswith("# The Offering — report"):
