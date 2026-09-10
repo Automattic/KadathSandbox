@@ -178,3 +178,29 @@ def test_load_backfills_runes_status_so_old_rows_resume(tmp_path):
     # a worthy pre-runes row is now resumable into the runes pass with no manual poke
     assert [r["case_id"] for r in m.pending("runes")] == ["W"]
     assert m.rows["N"]["runes_status"] == "skipped" and m.rows["S"]["runes_status"] == "skipped"
+
+
+def test_backup_mirror_survives_primary_loss(tmp_path):
+    prim = tmp_path / "lib" / "kadath-triage.csv"
+    bak = tmp_path / "safe" / "lib-kadath-triage.csv"
+    m = manifest.Manifest(str(prim), backup=str(bak))
+    m.ensure_rows([Case("A", str(tmp_path), "a.php", None, None)])
+    m.update("A", cavern_status="done", cavern_worthy="true")
+    m.flush()
+    assert prim.exists() and bak.exists()          # both written
+    # simulate a git clean -fdx of the library: the primary (and its dir) vanish
+    import shutil
+    shutil.rmtree(tmp_path / "lib")
+    m2 = manifest.Manifest(str(prim), backup=str(bak))
+    m2.load()                                        # restores the ledger from the backup
+    assert m2.rows["A"]["cavern_status"] == "done" and m2.rows["A"]["cavern_worthy"] == "true"
+    # and a subsequent flush re-establishes the primary
+    m2.flush()
+    assert prim.exists()
+
+
+def test_no_backup_still_works(tmp_path):
+    m = manifest.Manifest(str(tmp_path / "t.csv"))   # backup defaults to None
+    m.ensure_rows([Case("A", str(tmp_path), "a.php", None, None)])
+    m.flush()
+    assert (tmp_path / "t.csv").exists()

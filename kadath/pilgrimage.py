@@ -153,7 +153,9 @@ def main(argv):
     if a.limit is not None:
         cases = cases[:a.limit]
     by_id = _case_by_id(cases)
-    m = manifest.Manifest(os.path.join(lib, "kadath-triage.csv"))
+    backup = os.path.join(ROOT, ".kadath", "manifests",
+                          os.path.basename(lib.rstrip("/")) + "-kadath-triage.csv")
+    m = manifest.Manifest(os.path.join(lib, "kadath-triage.csv"), backup=backup)
     m.load()
     m.ensure_rows(cases)
     if a.retry_errors or a.force:
