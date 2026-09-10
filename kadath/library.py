@@ -51,7 +51,9 @@ def walk(library_dir):
         for r, ds, fs in os.walk(d):
             # skip hidden dirs and our own output dir — kadath/ holds runes'
             # unpacked/layer-*.php, which must never be mistaken for a 2nd sample
-            ds[:] = [x for x in ds if not x.startswith(".") and x != "kadath"]
+            # prune hidden dirs anywhere, and our own output dir only at the case
+            # root (a sample's own nested dir named "kadath" is left alone)
+            ds[:] = [x for x in ds if not x.startswith(".") and not (x == "kadath" and r == d)]
             phps.extend(sorted(os.path.join(r, fn) for fn in fs if fn.lower().endswith(".php")))
         phps = sorted(phps)
         readme = os.path.join(d, "README.md")

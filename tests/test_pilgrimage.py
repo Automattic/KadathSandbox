@@ -414,18 +414,45 @@ def test_do_offer_llm_timeout_with_reachable_ollama_uses_runes(tmp_path, monkeyp
     m2 = manifest.Manifest(str(lib / "kadath-triage.csv")); m2.load()
     assert m2.rows["A"]["offer_status"] == "done" and m2.rows["A"]["offer_coverage"] == "errored"
     assert m2.rows["A"]["decided_by"] == "runes"
+    # cavern(amber) vs runes(red) disagree -> not settled -> scry stays pending
+    assert m2.rows["A"]["scry_status"] == "pending"
 
 
-def test_do_offer_llm_error_ollama_down_errors_the_row(tmp_path, monkeypatch):
+def test_do_offer_runes_fallback_agreed_red_skips_scry(tmp_path, monkeypatch):
     lib = tmp_path / "lib"; _worthy_case_with_runes(lib, "A")
+    (lib / "A" / "kadath" / "cavern.json").write_text(json.dumps({"verdict": "red"}))  # agree with runes red
     cases = pilgrimage.library.walk(str(lib))
     m = manifest.Manifest(str(lib / "kadath-triage.csv")); m.ensure_rows(cases)
     m.update("A", cavern_status="done", cavern_worthy="true", runes_status="done"); m.flush()
+    monkeypatch.setattr(pilgrimage, "_make_client", _client_factory(reachable=True))
+    monkeypatch.setattr(pilgrimage, "free_gb", lambda p: 999.0)
+    monkeypatch.setattr(pilgrimage, "_stack_up", lambda: None)
+    monkeypatch.setattr(pilgrimage, "_stack_recover", lambda: True)
+    monkeypatch.setattr(pilgrimage.pilgrim_offer, "run",
+                        lambda *a, **k: (_ for _ in ()).throw(pilgrimage.pilgrim_offer.EngineError("PHP Parse error")))
+    pilgrimage.main([str(lib), "--pass", "offer"])
+    m2 = manifest.Manifest(str(lib / "kadath-triage.csv")); m2.load()
+    assert m2.rows["A"]["offer_status"] == "done" and m2.rows["A"]["final_verdict"] == "red"
+    # agreed red (cavern==runes, conf 0.9) settles even errored -> no scry
+    assert m2.rows["A"]["scry_status"] == "skipped"
+
+
+def test_do_offer_llm_error_ollama_down_errors_the_row(tmp_path, monkeypatch):
+    lib = tmp_path / "lib"
+    for cid in ("A", "B", "C"):
+        _worthy_case_with_runes(lib, cid)
+    cases = pilgrimage.library.walk(str(lib))
+    m = manifest.Manifest(str(lib / "kadath-triage.csv")); m.ensure_rows(cases)
+    for cid in ("A", "B", "C"):
+        m.update(cid, cavern_status="done", cavern_worthy="true", runes_status="done")
+    m.flush()
     monkeypatch.setattr(pilgrimage, "_make_client", _client_factory(reachable=False))
     monkeypatch.setattr(pilgrimage, "free_gb", lambda p: 999.0)
     monkeypatch.setattr(pilgrimage, "_stack_up", lambda: None)
     monkeypatch.setattr(pilgrimage.pilgrim_offer, "run",
                         lambda *a, **k: (_ for _ in ()).throw(pilgrimage.llm.LLMError("connection refused")))
-    pilgrimage.main([str(lib), "--pass", "offer"])
+    rc = pilgrimage.main([str(lib), "--pass", "offer"])
+    # Ollama down is not papered over by the runes fallback: the breaker aborts
+    assert rc == 1
     m2 = manifest.Manifest(str(lib / "kadath-triage.csv")); m2.load()
-    assert m2.rows["A"]["offer_status"] == "error"   # Ollama down: not papered over
+    assert m2.rows["A"]["offer_status"] == "error" and m2.rows["C"]["offer_status"] == "pending"

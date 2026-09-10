@@ -218,7 +218,11 @@ def main(argv):
                     rr = None
                 if rr and rr.get("verdict"):
                     cp = os.path.join(kd, "cavern.json")
-                    cav = json.load(open(cp)) if os.path.exists(cp) else {}
+                    try:
+                        with open(cp) as f:
+                            cav = json.load(f)
+                    except (OSError, ValueError):
+                        cav = {}
                     v = pilgrim_offer._finish_from_runes(kd, cav, rr, e.stderr, client)
                     return {"offer_verdict": v["verdict"], "offer_coverage": v["coverage"],
                             "run_dir": "", "final_verdict": v["verdict"], "decided_by": v["decided_by"],
