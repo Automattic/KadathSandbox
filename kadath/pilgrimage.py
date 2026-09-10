@@ -2,12 +2,13 @@
 and the Deep Scrying, one pass at a time, with the manifest as the only state.
 One bad case never stops the procession; a run of bad cases does."""
 import argparse
+import hashlib
 import json
 import os
 import shutil
 import subprocess
 import sys
-from kadath import cavern, deepscry, library, llm, manifest, pilgrim_offer
+from kadath import cavern, deepscry, library, llm, manifest, pilgrim_offer, runes
 from kadath.shell import run as sh, ShellError
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -18,10 +19,13 @@ def parse_args(argv):
     ap = argparse.ArgumentParser(prog="kadath pilgrimage",
                                  description="Triage a threat-library for-later-review directory with a local model.")
     ap.add_argument("library")
-    ap.add_argument("--pass", dest="passes", choices=["cavern", "offer", "scry", "all"], default="all")
+    ap.add_argument("--pass", dest="passes", choices=["cavern", "runes", "offer", "scry", "all"], default="all")
     ap.add_argument("--limit", type=int)
     ap.add_argument("--case", action="append", default=[])
     ap.add_argument("--model")
+    ap.add_argument("--runes-model", default=os.environ.get("KADATH_RUNES_MODEL",
+                    "hf.co/ree2raz/CyberSecQwen-4B-GGUF:Q4_K_M"),
+                    help="model for the Runes tier (default: a security-tuned local model)")
     ap.add_argument("--ollama")
     ap.add_argument("--sampling", action="append", default=[], metavar="TIER.KEY=VALUE")
     ap.add_argument("--profiles")
@@ -31,8 +35,10 @@ def parse_args(argv):
     ap.add_argument("--min-free-gb", type=float, default=20)
     ap.add_argument("--engine", default="python3 bin/kadath offer", help="test hook: engine command")
     ap.add_argument("--no-stack", action="store_true", help="test hook: skip the stack preflight")
+    ap.add_argument("--no-manifest-backup", action="store_true",
+                    help="do not mirror the ledger outside the library (used by tests)")
     a = ap.parse_args(argv)
-    a.passes = ["cavern", "offer", "scry"] if a.passes == "all" else [a.passes]
+    a.passes = ["cavern", "runes", "offer", "scry"] if a.passes == "all" else [a.passes]
     a.engine = a.engine.split()
     return a
 
@@ -73,9 +79,9 @@ def run_pass(name, m, rows, fn, breaker=3):
     return counts
 
 
-def _make_client(a):
+def _make_client(a, model=None):
     prof = llm.build_profiles(llm.parse_overrides(a.sampling), a.profiles, a.seed)
-    return llm.Client(a.ollama, a.model, prof)
+    return llm.Client(a.ollama, model or a.model, prof)
 
 
 def _stack_up():
@@ -102,23 +108,18 @@ def _case_by_id(cases):
 
 
 def _settled(v):
-    """True when an Offering verdict needs no Deep Scrying. Amber never settles.
-    The Cavern and the model must agree, the deterministic layer must not
-    contradict them (a runtime red against a model green), and the model
-    must be confident. A red so agreed is settled
-    even if the run errored — a Deep Scrying cannot add runtime evidence that
-    the run did not produce. A green settles only when the sample really ran
-    (coverage full): runtime silence is not evidence."""
+    """No Deep Scrying needed when the static reads and the offering model that
+    ran all agree on a non-amber verdict, the runtime did not find MORE than they
+    did, and confidence is adequate. An agreed red settles even on an errored run
+    (no runtime evidence can be added for a sample that would not run); a green
+    settles only when the sample actually ran (coverage full)."""
     level = v["verdict"]
     if level == "amber":
         return False
-    cav, mv = v.get("cavern_verdict"), v.get("model_verdict")
-    det = (v.get("deterministic") or {}).get("level", "green")
-    if cav is not None and cav != mv:
+    votes = [v.get(k) for k in ("cavern_verdict", "runes_verdict", "model_verdict") if v.get(k)]
+    if any(x != level for x in votes):          # any static/model read dissents -> scry
         return False
-    # the deterministic layer contradicting the model (an admin created that
-    # the model called green) is exactly what the Deep Scrying is for
-    if pilgrim_offer.ORDER[det] > pilgrim_offer.ORDER[mv or level] or v.get("confidence", 0) < 0.6:
+    if v.get("confidence", 0) < 0.6:
         return False
     return level == "red" or v.get("coverage") == "full"
 
@@ -130,8 +131,11 @@ def main(argv):
         print(f"error: {lib} is not a directory", file=sys.stderr)
         return 2
     client = _make_client(a)
+    runes_client = _make_client(a, a.runes_model)
     try:
         client.preflight()
+        if "runes" in a.passes:
+            runes_client.preflight()
     except llm.LLMError as e:
         print(f"error: ollama preflight failed: {e}", file=sys.stderr)
         return 2
@@ -152,7 +156,12 @@ def main(argv):
     if a.limit is not None:
         cases = cases[:a.limit]
     by_id = _case_by_id(cases)
-    m = manifest.Manifest(os.path.join(lib, "kadath-triage.csv"))
+    backup = None
+    if not a.no_manifest_backup:
+        tag = hashlib.sha1(lib.encode()).hexdigest()[:8]
+        backup = os.path.join(ROOT, ".kadath", "manifests",
+                              f"{os.path.basename(lib.rstrip('/'))}-{tag}-kadath-triage.csv")
+    m = manifest.Manifest(os.path.join(lib, "kadath-triage.csv"), backup=backup)
     m.load()
     m.ensure_rows(cases)
     if a.retry_errors or a.force:
@@ -167,18 +176,58 @@ def main(argv):
                   "sha256": facts.get("sha256", ""), "size": facts.get("size", "")}
         if not out["worthy"]:
             fields.update(final_verdict=out["verdict"], decided_by="cavern",
-                          offer_status="skipped", scry_status="skipped")
+                          runes_status="skipped", offer_status="skipped", scry_status="skipped")
         return fields
+
+    def do_runes(row):
+        case = by_id[row["case_id"]]
+        cp = os.path.join(case.dir, "kadath", "cavern.json")
+        if not os.path.exists(cp):
+            raise RuntimeError(f"cavern.json missing for {case.id} (artifact lost?); "
+                               "re-run --pass cavern --case " + case.id)
+        with open(cp) as f:
+            cav = json.load(f)
+        out = runes.run(case, cav, runes_client, PROMPTS)
+        # provisional final verdict for a runes-only run; the Offering overwrites it
+        return {"runes_verdict": out["verdict"], "final_verdict": out["verdict"],
+                "decided_by": out["decided_by"]}
 
     def do_offer(row):
         if free_gb(ROOT) < a.min_free_gb:
             raise RuntimeError(f"free disk below {a.min_free_gb} GB; aborting")
+        case = by_id[row["case_id"]]
         try:
-            v = pilgrim_offer.run(by_id[row["case_id"]], row, client, ROOT, PROMPTS, a.engine)
-        except pilgrim_offer.EngineError as e:
-            # a per-sample engine failure is an error row; only a sick stack
-            # counts toward the breaker
-            e.stack_healthy = _stack_recover() if not a.no_stack else True
+            v = pilgrim_offer.run(case, row, client, ROOT, PROMPTS, a.engine)
+        except (pilgrim_offer.EngineError, llm.LLMError) as e:
+            # a per-sample failure lets the Runes' static read stand in (coverage
+            # errored), but only if the INFRA is healthy — a broken sandbox
+            # (EngineError) or a down Ollama (LLMError) still raises so the breaker
+            # aborts the pass instead of silently downgrading every remaining case.
+            if isinstance(e, llm.LLMError):
+                healthy = client.reachable()          # transient timeout vs Ollama down
+                e.stderr = str(e)
+            else:
+                healthy = _stack_recover() if not a.no_stack else True
+            kd = os.path.join(case.dir, "kadath")
+            rp = os.path.join(kd, "runes.json")
+            if healthy and os.path.exists(rp):
+                try:
+                    with open(rp) as f:
+                        rr = json.load(f)
+                except (OSError, ValueError):
+                    rr = None
+                if rr and rr.get("verdict"):
+                    cp = os.path.join(kd, "cavern.json")
+                    try:
+                        with open(cp) as f:
+                            cav = json.load(f)
+                    except (OSError, ValueError):
+                        cav = {}
+                    v = pilgrim_offer._finish_from_runes(kd, cav, rr, e.stderr, client)
+                    return {"offer_verdict": v["verdict"], "offer_coverage": v["coverage"],
+                            "run_dir": "", "final_verdict": v["verdict"], "decided_by": v["decided_by"],
+                            "scry_status": "skipped" if _settled(v) else "pending"}
+            e.stack_healthy = healthy
             raise
         fields = {"offer_verdict": v["verdict"], "offer_coverage": v["coverage"], "run_dir": v["run_dir"],
                   "final_verdict": v["verdict"], "decided_by": "offer"}
@@ -197,7 +246,7 @@ def main(argv):
         v = deepscry.run(case, row, client, PROMPTS)
         return {"scry_verdict": v["verdict"], "final_verdict": v["verdict"], "decided_by": "deepscry"}
 
-    fns = {"cavern": do_cavern, "offer": do_offer, "scry": do_scry}
+    fns = {"cavern": do_cavern, "runes": do_runes, "offer": do_offer, "scry": do_scry}
     for name in a.passes:
         rows = [r for r in m.pending(name) if r["case_id"] in by_id]
         if name == "offer" and rows and free_gb(ROOT) < a.min_free_gb:

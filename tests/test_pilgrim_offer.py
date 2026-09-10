@@ -66,7 +66,7 @@ def test_evidence_pack_contents():
         assert needle in pack
     # A trace excerpt containing ``` cannot close the fence early: the whole pack
     # has exactly 2 fence markers per section (10 sections), no stray ones.
-    assert pack.count("```") == 22  # 11 sections × 2 fence markers
+    assert pack.count("```") == 24  # 12 sections × 2 fence markers (RUNES added)
     # Check that FLOW BODIES section is inside a json fence
     flow_start = pack.find("=== FLOW BODIES")
     flow_end = pack.find("=== ", flow_start + 1)
@@ -347,3 +347,41 @@ def test_run_model_errored_claim_yields_to_engine(tmp_path, monkeypatch):
     v, client = _run_with_meta(tmp_path, monkeypatch, {"stubs": [], "fatal": True, "fatals": [line]}, {"verdict": "red"})
     assert v["coverage"] == "errored" and v["fatals"] == [line]
     assert "Path cannot be empty" in client.calls[0][0][1]["content"]     # the model sees the fatal line
+
+
+def test_finish_from_runes_records_errored_verdict(tmp_path):
+    kd = tmp_path / "kadath"; kd.mkdir()
+    runes = {"verdict": "red", "family": "backdoor", "confidence": 0.8,
+             "iocs_extra": [{"type": "url", "value": "http://evil.test"}], "persistence": ["cron"],
+             "reason": "static payload decodes to a shell"}
+    client = type("C", (), {"model": "cyberqwen", "profiles": dict(llm.PROFILES)})()
+    stderr = "PHP Parse error: syntax error in /samples/x.php on line 2"
+    v = po._finish_from_runes(str(kd), {"verdict": "amber"}, runes, stderr, client)
+    assert v["verdict"] == "red" and v["decided_by"] == "runes" and v["coverage"] == "errored"
+    assert v["model_verdict"] is None and v["runes_verdict"] == "red" and v["cavern_verdict"] == "amber"
+    disk = json.load(open(os.path.join(str(kd), "verdict.json")))
+    assert disk["verdict"] == "red" and disk["yara"] == "runes-only"
+    assert "did not complete" in open(os.path.join(str(kd), "report.md")).read()
+    # when the Cavern already outranks the Runes, the Cavern is credited
+    v2 = po._finish_from_runes(str(kd), {"verdict": "red"}, dict(runes, verdict="amber"), stderr, client)
+    assert v2["verdict"] == "red" and v2["decided_by"] == "cavern"
+
+
+def test_run_engine_error_without_runes_still_raises(tmp_path, monkeypatch):
+    case, root, eng = _setup(tmp_path)
+    eng.write_text("#!/bin/sh\necho boom >&2\nexit 1\n")
+    monkeypatch.setattr(po, "flow_bodies", lambda root, epoch: ([], None))
+    # no runes.json present -> the loop-breaker path (error row) must still fire
+    with pytest.raises(po.EngineError):
+        po.run(case, {"case_id": "FIO-7"}, FakeClient(GOOD_VERDICT, []), str(root), PROMPTS, [str(eng)])
+
+
+def test_run_proceeds_when_cavern_json_is_missing(tmp_path, monkeypatch):
+    # a lost cavern.json (e.g. an external git clean on the library) must not
+    # crash the offer — it proceeds without the Cavern floor
+    case, root, eng = _setup(tmp_path)
+    os.remove(os.path.join(case.dir, "kadath", "cavern.json"))
+    monkeypatch.setattr(po, "flow_bodies", lambda root, epoch: ([], None))
+    client = FakeClient(GOOD_VERDICT, ["# R\n=====DRAFT.YAR=====\nrule k { strings: $a = \"zz\" condition: $a }\n"])
+    v = po.run(case, {"case_id": "FIO-7"}, client, str(root), PROMPTS, [str(eng)])
+    assert v["verdict"] == "red" and v["cavern_verdict"] is None   # no cavern floor, det/model decide

@@ -43,18 +43,21 @@ class EngineError(RuntimeError):
         self.stderr = stderr
 
 
-def final_verdict(det_level, model_level, cavern_level=None):
+def final_verdict(det_level, model_level, cavern_level=None, runes_level=None):
     """max on red > amber > green over the deterministic, model, and (when
-    given) Cavern verdicts; who won is recorded, ties going to the evidence
-    (deterministic, then Cavern, then model). A disagreement is routed to the
-    Deep Scrying by the orchestrator, never downgraded here."""
+    given) the Cavern and Runes static verdicts; who won is recorded, ties going
+    to the evidence in order deterministic > runes > cavern > model. A
+    disagreement is routed to the Deep Scrying by the orchestrator, never
+    downgraded here."""
     levels = {"deterministic": det_level, "model": model_level}
     if cavern_level is not None:
         levels["cavern"] = cavern_level
+    if runes_level is not None:
+        levels["runes"] = runes_level
     if len(set(levels.values())) == 1:
         return det_level, "agree"
     top = max(ORDER[v] for v in levels.values())
-    for who in ("deterministic", "cavern", "model"):
+    for who in ("deterministic", "runes", "cavern", "model"):
         if who in levels and ORDER[levels[who]] == top:
             return levels[who], who
 
@@ -139,12 +142,16 @@ def _fence(title, body, lang=""):
     return f"\n=== {title} ===\n{body}\n"
 
 
-def evidence_pack(summary, cav, det, trace_text, bodies):
+def evidence_pack(summary, cav, det, trace_text, bodies, runes=None):
     net = summary.get("network", {})
     non_core = {"flows": [f for f in net.get("flows", []) if not f.get("wp_core")],
                 "dns": net.get("dns", []), "dropped": net.get("dropped", [])}
     parts = [UNTRUSTED_PREAMBLE,
              _fence("DETERMINISTIC VERDICT", json.dumps(det), "json"),
+             _fence("STATIC READ (Runes: deobfuscated payload)", json.dumps(
+                 {"verdict": (runes or {}).get("verdict"), "family": (runes or {}).get("family"),
+                  "layers": (runes or {}).get("layers", []), "flows": (runes or {}).get("flows", []),
+                  "reason": (runes or {}).get("reason")} if runes else {"note": "no runes read available"}), "json"),
              _fence("STATIC JUDGMENT (Cavern)", json.dumps(
                  {"verdict": cav.get("verdict"), "family": cav.get("family"),
                   "regions": cav.get("regions"), "needs_input": cav.get("needs_input"),
@@ -176,17 +183,55 @@ def _fatal_in_run(run_dir):
     return False
 
 
+def _finish_from_runes(kd, cav, runes_read, stderr, client):
+    """The Offering could not run the sample; record a verdict from the Runes'
+    static read (coverage errored) so the broken-sample loop ends here."""
+    static = {"cavern": cav.get("verdict") or "green", "runes": runes_read["verdict"]}
+    level = max(static.values(), key=lambda x: ORDER[x])
+    decided = "runes" if ORDER[static["runes"]] == ORDER[level] else "cavern"
+    fatals = [l for l in stderr.splitlines() if "Fatal" in l or "Parse error" in l][-3:]
+    out = {"verdict": level, "decided_by": decided, "confidence": runes_read.get("confidence", 0.5),
+           "deterministic": {"level": "green", "reasons": []}, "model_verdict": None,
+           "cavern_verdict": cav.get("verdict"), "runes_verdict": runes_read["verdict"],
+           "coverage": "errored", "stubs": [], "adopted": False, "fatals": fatals,
+           "iocs_extra": runes_read.get("iocs_extra", []), "persistence": runes_read.get("persistence", []),
+           "reason": "the Offering did not complete (engine or verdict model); verdict from the Runes static read. "
+                     + runes_read.get("reason", "")[:300],
+           "yara": "runes-only", "run_dir": "", "model": client.model,
+           "sampling": dict(client.profiles["offer"]), "prompt_sha256": {}, "at": manifest.now_iso()}
+    with open(os.path.join(kd, "verdict.json"), "w") as f:
+        json.dump(out, f, indent=2)
+    with open(os.path.join(kd, "report.md"), "w") as f:
+        f.write("# Offering - did not complete\n\nThe detonation or the verdict model did not "
+                "complete; the verdict is the Runes static read of the (deobfuscated) code.\n\n"
+                + "**Verdict:** " + level + " (" + decided + ").  " + out["reason"] + "\n")
+    return out
+
+
 def run(case, row, client, root, prompts_dir, engine_cmd):
     kd = os.path.join(case.dir, "kadath")
     os.makedirs(kd, exist_ok=True)
-    with open(os.path.join(kd, "cavern.json")) as f:
-        cav = json.load(f)
+    cav = {}
+    _cp = os.path.join(kd, "cavern.json")
+    if os.path.exists(_cp):
+        with open(_cp) as f:
+            cav = json.load(f)
+    else:
+        print(f"warning: {_cp} missing; offering without the Cavern floor", file=sys.stderr)
+    runes_read = None
+    rp = os.path.join(kd, "runes.json")
+    if os.path.exists(rp):
+        try:
+            with open(rp) as f:
+                runes_read = json.load(f)
+        except (OSError, ValueError):
+            runes_read = None
     try:
         summary_path = run_engine(engine_cmd, case.php, case.id, root, adopt=library.wants_wordpress(case.php))
     except EngineError as e:
         with open(os.path.join(kd, "engine-stderr.txt"), "w") as f:
             f.write(e.stderr)
-        raise
+        raise      # the orchestrator decides whether the Runes stand in (stack healthy) or this is an outage
     run_dir = os.path.dirname(summary_path)
     with open(summary_path) as f:
         summ = json.load(f)
@@ -197,7 +242,7 @@ def run(case, row, client, root, prompts_dir, engine_cmd):
         traces = sorted(os.path.join(bundle, n) for n in os.listdir(bundle)) if os.path.isdir(bundle) else []
     trace_text = trace_excerpt(traces)
     bodies, flow_bodies_error = flow_bodies(root, summ.get("run", {}).get("epoch", 0))
-    pack = evidence_pack(summ, cav, det, trace_text, bodies)
+    pack = evidence_pack(summ, cav, det, trace_text, bodies, runes_read)
     with open(os.path.join(run_dir, "evidence.json"), "w") as f:
         json.dump({"trace_excerpt": trace_text, "flow_bodies": bodies, "network": summ.get("network"),
                    "db_diff": summ.get("db_diff"), "deterministic": det,
@@ -227,7 +272,8 @@ def run(case, row, client, root, prompts_dir, engine_cmd):
         coverage = "stubbed"
     elif coverage == "errored":
         coverage = "full"          # the engine saw no fatal; the model's claim does not stand
-    level, decided_by = final_verdict(det["level"], mv["verdict"], cav.get("verdict"))
+    level, decided_by = final_verdict(det["level"], mv["verdict"], cav.get("verdict"),
+                                      (runes_read or {}).get("verdict"))
 
     sys_r, sha_r = load_prompt(prompts_dir, "offer_report")
     verdict_note = (f"\nRecorded verdict: {level} (deterministic {det['level']}, model {mv['verdict']}, "
@@ -270,6 +316,7 @@ def run(case, row, client, root, prompts_dir, engine_cmd):
            "deterministic": det, "model_verdict": mv["verdict"], "cavern_verdict": cav.get("verdict"),
            "coverage": coverage, "stubs": stubs_made, "adopted": run_meta.get("adopted", False),
            "fatals": run_meta.get("fatals", []),
+           "runes_verdict": (runes_read or {}).get("verdict"),
            "iocs_extra": mv["iocs_extra"], "persistence": mv["persistence"], "reason": mv["reason"],
            "yara": yara_status, "run_dir": run_dir, "model": client.model,
            "sampling": dict(client.profiles["offer"]),

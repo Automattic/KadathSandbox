@@ -138,7 +138,13 @@ Three passes, each resumable from `kadath-triage.csv`:
    line ranges, and whether detonation would teach anything a static read cannot.
    The script forces "worthy" on anything using WordPress APIs, network
    primitives, or encoded blobs, and on anything the model is not confident about.
-2. **Offer** — `bin/kadath offer` detonates each worthy case; the model writes
+2. **Runes** — before detonation, the sample is statically deobfuscated (literal
+   `base64`/`gzinflate`/`rot13`/hex chains peeled layer by layer, no code run) and
+   a security-tuned model (default CyberSecQwen-4B) reads the payload. Its verdict
+   enriches the Offering, and *is* the verdict when the Offering cannot run the
+   sample at all — so the tail of broken, un-runnable malware stops looping through
+   the detonator. Writes `runes.json` and `unpacked/layer-*.php`.
+3. **Offer** — `bin/kadath offer` detonates each worthy case; the model writes
    `report.md`, `iocs.json` extras, and `draft.yar` from a compact evidence pack.
    The deterministic verdict travels with it: the model can argue, but never
    lowers it — the higher of the two wins, and any disagreement sends the case
@@ -150,7 +156,7 @@ Three passes, each resumable from `kadath-triage.csv`:
    runtime silence is not evidence. A case is settled when the Cavern and the
    model agree and the deterministic layer does not exceed them; everything
    else — amber, a disagreement, an unexercised green — goes to the Scry.
-3. **Scry** — ambers, low-confidence reds, and every disagreement get an agentic
+4. **Scry** — ambers, low-confidence reds, and every disagreement get an agentic
    re-examination with read-only tools; every claim must quote a tool result
    verbatim or it is dropped, and it never lowers a deterministic verdict.
 
@@ -159,6 +165,7 @@ committed; promotion into the library stays a human PR.
 
 ```bash
 ollama pull orcarouter/Qwen3.8-27B-Uncensored:latest
+ollama pull hf.co/ree2raz/CyberSecQwen-4B-GGUF:Q4_K_M   # the Runes model (override with --runes-model)
 make pilgrimage LIBRARY=~/WORK/jetpack-threat-library/for-later-review PASS=cavern LIMIT=50
 ```
 
@@ -306,3 +313,5 @@ capture until those containers restart. Use `make reset`, or restart `gateway`/`
 - Treat `artifacts/` as hostile: decrypted flows and dumps can contain second-stage payloads. Read them with `cat -v` / `grep -a ... | cat -v` rather than letting raw sample bytes hit your terminal.
 - **Use a throwaway browser profile** for http://127.0.0.1:8088 and http://127.0.0.1:8081. You are pointing a browser at attacker-controlled HTML with a real session; a profile holding your normal cookies, extensions and saved passwords is exposed to whatever the sample serves, and mitmweb renders sample-controlled request and response bodies too.
 - **The sample can delete artifacts that were already written.** It runs as uid 33 and the artifact directories must be writable by uid 33 for the observation layer to work at all, so anti-forensic `unlink()` is available to it. It cannot stop the recording — `netcap`, mitmproxy and dnsmasq write from containers it has no access to, and the PHP-side off switches are disabled — but it can destroy what is on disk. `make snapshot` after each offering is the mitigation.
+
+**Durability.** The pilgrimage mirrors its progress ledger (`kadath-triage.csv`) to `<repo>/.kadath/manifests/<library>-<hash>-kadath-triage.csv`, outside the threat-library repo, and restores from it if the in-library copy is lost (e.g. a `git clean -fdx` on the library). Per-case `kadath/` artifacts are regenerable by re-running a pass; the ledger is the expensive state, so it is the one kept safe.

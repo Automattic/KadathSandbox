@@ -162,3 +162,22 @@ def test_wants_wordpress(tmp_path):
         p.write_text(body)
         assert library.wants_wordpress(str(p)) is want, body
     assert library.wants_wordpress(str(tmp_path / "missing.php")) is False
+
+
+def test_walk_ignores_our_kadath_output_dir(tmp_path):
+    d = tmp_path / "FIO-1"; d.mkdir()
+    (d / "s.php").write_text("<?php echo 1;")
+    unp = d / "kadath" / "unpacked"; unp.mkdir(parents=True)
+    (unp / "layer-1.php").write_text("<?php system($_GET['c']);")   # runes output, not a sample
+    (d / "kadath" / "runes.json").write_text("{}")
+    case = [c for c in library.walk(str(tmp_path)) if c.id == "FIO-1"][0]
+    assert case.skip_reason is None and case.php.endswith("s.php")
+
+
+def test_walk_keeps_a_sample_in_a_nested_dir_named_kadath(tmp_path):
+    # a sample archived under its own subdir literally named "kadath" (not our
+    # output at the case root) must still be found
+    d = tmp_path / "FIO-2"; (d / "vendor" / "kadath").mkdir(parents=True)
+    (d / "vendor" / "kadath" / "shell.php").write_text("<?php system($_GET['c']);")
+    case = [c for c in library.walk(str(tmp_path)) if c.id == "FIO-2"][0]
+    assert case.php is not None and case.php.endswith("shell.php") and case.skip_reason is None
