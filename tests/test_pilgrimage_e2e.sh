@@ -14,7 +14,7 @@ for i in $(seq 1 50); do curl -fs "http://127.0.0.1:$PORT/api/tags" >/dev/null 2
 pass=0; fail=0
 check() { if eval "$2"; then echo "ok   $1"; pass=$((pass+1)); else echo "FAIL $1"; fail=$((fail+1)); fi; }
 run() { python3 bin/kadath pilgrimage "$WORK/lib" --ollama "http://127.0.0.1:$PORT" --model fake-model --runes-model fake-model \
-          --engine "bash tests/fixtures/fake_engine.sh" --no-stack "$@" 2>"$WORK/err.log"; }
+          --engine "bash tests/fixtures/fake_engine.sh" --no-stack --no-manifest-backup "$@" 2>"$WORK/err.log"; }
 
 # Pass 1 only, limited: resume must pick up the rest afterwards.
 run --pass cavern --limit 2

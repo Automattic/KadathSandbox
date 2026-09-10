@@ -2,6 +2,7 @@
 and the Deep Scrying, one pass at a time, with the manifest as the only state.
 One bad case never stops the procession; a run of bad cases does."""
 import argparse
+import hashlib
 import json
 import os
 import shutil
@@ -34,6 +35,8 @@ def parse_args(argv):
     ap.add_argument("--min-free-gb", type=float, default=20)
     ap.add_argument("--engine", default="python3 bin/kadath offer", help="test hook: engine command")
     ap.add_argument("--no-stack", action="store_true", help="test hook: skip the stack preflight")
+    ap.add_argument("--no-manifest-backup", action="store_true",
+                    help="do not mirror the ledger outside the library (used by tests)")
     a = ap.parse_args(argv)
     a.passes = ["cavern", "runes", "offer", "scry"] if a.passes == "all" else [a.passes]
     a.engine = a.engine.split()
@@ -153,8 +156,11 @@ def main(argv):
     if a.limit is not None:
         cases = cases[:a.limit]
     by_id = _case_by_id(cases)
-    backup = os.path.join(ROOT, ".kadath", "manifests",
-                          os.path.basename(lib.rstrip("/")) + "-kadath-triage.csv")
+    backup = None
+    if not a.no_manifest_backup:
+        tag = hashlib.sha1(lib.encode()).hexdigest()[:8]
+        backup = os.path.join(ROOT, ".kadath", "manifests",
+                              f"{os.path.basename(lib.rstrip('/'))}-{tag}-kadath-triage.csv")
     m = manifest.Manifest(os.path.join(lib, "kadath-triage.csv"), backup=backup)
     m.load()
     m.ensure_rows(cases)
