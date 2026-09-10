@@ -211,8 +211,13 @@ def _finish_from_runes(kd, cav, runes_read, stderr, client):
 def run(case, row, client, root, prompts_dir, engine_cmd):
     kd = os.path.join(case.dir, "kadath")
     os.makedirs(kd, exist_ok=True)
-    with open(os.path.join(kd, "cavern.json")) as f:
-        cav = json.load(f)
+    cav = {}
+    _cp = os.path.join(kd, "cavern.json")
+    if os.path.exists(_cp):
+        with open(_cp) as f:
+            cav = json.load(f)
+    else:
+        print(f"warning: {_cp} missing; offering without the Cavern floor", file=sys.stderr)
     runes_read = None
     rp = os.path.join(kd, "runes.json")
     if os.path.exists(rp):

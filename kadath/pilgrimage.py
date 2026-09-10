@@ -173,7 +173,11 @@ def main(argv):
 
     def do_runes(row):
         case = by_id[row["case_id"]]
-        with open(os.path.join(case.dir, "kadath", "cavern.json")) as f:
+        cp = os.path.join(case.dir, "kadath", "cavern.json")
+        if not os.path.exists(cp):
+            raise RuntimeError(f"cavern.json missing for {case.id} (artifact lost?); "
+                               "re-run --pass cavern --case " + case.id)
+        with open(cp) as f:
             cav = json.load(f)
         out = runes.run(case, cav, runes_client, PROMPTS)
         # provisional final verdict for a runes-only run; the Offering overwrites it
@@ -205,8 +209,8 @@ def main(argv):
                 except (OSError, ValueError):
                     rr = None
                 if rr and rr.get("verdict"):
-                    with open(os.path.join(kd, "cavern.json")) as f:
-                        cav = json.load(f)
+                    cp = os.path.join(kd, "cavern.json")
+                    cav = json.load(open(cp)) if os.path.exists(cp) else {}
                     v = pilgrim_offer._finish_from_runes(kd, cav, rr, e.stderr, client)
                     return {"offer_verdict": v["verdict"], "offer_coverage": v["coverage"],
                             "run_dir": "", "final_verdict": v["verdict"], "decided_by": v["decided_by"],

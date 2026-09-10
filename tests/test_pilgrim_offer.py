@@ -374,3 +374,14 @@ def test_run_engine_error_without_runes_still_raises(tmp_path, monkeypatch):
     # no runes.json present -> the loop-breaker path (error row) must still fire
     with pytest.raises(po.EngineError):
         po.run(case, {"case_id": "FIO-7"}, FakeClient(GOOD_VERDICT, []), str(root), PROMPTS, [str(eng)])
+
+
+def test_run_proceeds_when_cavern_json_is_missing(tmp_path, monkeypatch):
+    # a lost cavern.json (e.g. an external git clean on the library) must not
+    # crash the offer — it proceeds without the Cavern floor
+    case, root, eng = _setup(tmp_path)
+    os.remove(os.path.join(case.dir, "kadath", "cavern.json"))
+    monkeypatch.setattr(po, "flow_bodies", lambda root, epoch: ([], None))
+    client = FakeClient(GOOD_VERDICT, ["# R\n=====DRAFT.YAR=====\nrule k { strings: $a = \"zz\" condition: $a }\n"])
+    v = po.run(case, {"case_id": "FIO-7"}, client, str(root), PROMPTS, [str(eng)])
+    assert v["verdict"] == "red" and v["cavern_verdict"] is None   # no cavern floor, det/model decide
