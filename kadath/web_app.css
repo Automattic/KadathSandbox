@@ -29,7 +29,8 @@ label { display: block; margin: .6rem 0; }
 table { border-collapse: collapse; width: 100%; margin: .5rem 0 1.5rem; }
 th, td { border: 1px solid var(--border); padding: .3rem .5rem; text-align: left; font-size: 13px; }
 tr.wpcore { opacity: .5; }
-td.admin { color: var(--red-fg); font-weight: 600; }
+td.admin, td.flowerr { color: var(--red-fg); font-weight: 600; }
+td.warn { color: var(--amber-fg); font-weight: 600; }
 h3 { margin: 1.2rem 0 .3rem; }
 .note { color: var(--muted); }
 a { color: inherit; }

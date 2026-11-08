@@ -60,3 +60,53 @@ def test_red_flow_outranks_dns():
     v = web_verdict.compute(_summary(network={"dns": ["evil.example"], "flows": [f], "dropped": []}))
     assert v["level"] == "red"
     assert not any(r.startswith("DNS lookup") for r in v["reasons"])
+
+
+def test_amber_on_login_failed():
+    v = web_verdict.compute(_summary(run={"login_ok": False}))
+    assert v["level"] == "amber"
+    assert "admin login failed; the sample ran unauthenticated" in v["reasons"]
+
+def test_login_ok_true_or_absent_is_not_amber():
+    assert web_verdict.compute(_summary(run={"login_ok": True}))["level"] == "green"
+    assert web_verdict.compute(_summary(run={}))["level"] == "green"
+
+def test_amber_on_wp_restarted():
+    v = web_verdict.compute(_summary(run={"wp_restarted": True}))
+    assert v["level"] == "amber"
+    assert "wordpress container restarted during the run" in v["reasons"]
+
+def test_amber_on_fatal():
+    v = web_verdict.compute(_summary(run={"fatal": True}))
+    assert v["level"] == "amber"
+    assert "PHP fatal during the run" in v["reasons"]
+
+def test_amber_on_warnings_verbatim():
+    v = web_verdict.compute(_summary(warnings=["no pcap captured", "trace truncated"]))
+    assert v["level"] == "amber"
+    assert "warning: no pcap captured" in v["reasons"] and "warning: trace truncated" in v["reasons"]
+
+def test_empty_warnings_is_green():
+    assert web_verdict.compute(_summary(warnings=[]))["level"] == "green"
+
+def test_red_beats_coverage_amber():
+    f = {"host": "evil.example", "status": 200, "wp_core": False}
+    v = web_verdict.compute(_summary(run={"login_ok": False, "fatal": True}, warnings=["w"],
+                                     network={"dns": [], "flows": [f], "dropped": []}))
+    assert v["level"] == "red"
+    assert not any("login" in r or "warning" in r or "fatal" in r for r in v["reasons"])
+
+def test_red_on_spoofed_host_flow():
+    f = {"host": "api.wordpress.org", "dst": "6.6.6.6", "host_spoofed": True, "wp_core": False, "status": 200}
+    v = web_verdict.compute(_summary(network={"dns": [], "flows": [f], "dropped": []}))
+    assert v["level"] == "red"
+    assert v["reasons"] == ["outbound HTTP(S) to 6.6.6.6 with a spoofed Host header 'api.wordpress.org'"]
+
+def test_spoofed_host_without_dst_uses_question_mark():
+    f = {"host": "x.example", "host_spoofed": True, "wp_core": False}
+    v = web_verdict.compute(_summary(network={"dns": [], "flows": [f], "dropped": []}))
+    assert v["reasons"] == ["outbound HTTP(S) to ? with a spoofed Host header 'x.example'"]
+
+def test_missing_sections_do_not_crash():
+    assert web_verdict.compute({})["level"] == "green"
+    assert web_verdict.compute({"db_diff": None, "network": None, "run": None})["level"] == "green"

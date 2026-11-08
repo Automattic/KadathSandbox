@@ -5,7 +5,7 @@ set -e
 echo "bringing the stack up..." >&2
 echo "staging..." >&2
 echo "triggering..." >&2
-REP="$(dirname "$0")/../../.kadath/webtest-report"
+REP="$PWD/.kadath/webtest-report"   # cwd is the job manager's workdir (a tmp dir in tests)
 mkdir -p "$REP"
 cat > "$REP/summary.json" <<JSON
 {"sample":{"filename":"x.php","sha256":"a","type":"plugin"},

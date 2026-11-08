@@ -94,3 +94,65 @@ def test_prune_uploads_ignores_plain_files(tmp_path):
 
 def test_prune_uploads_missing_dir(tmp_path):
     assert web.prune_uploads(str(tmp_path)) == []
+
+
+def test_start_exception_ends_in_error_and_unwedges(tmp_path, monkeypatch):
+    cmd, _ = _stub_engine(tmp_path)
+    jm = web.JobManager(cmd, str(tmp_path))
+    def boom(*a, **k):
+        raise ValueError("kaboom")
+    monkeypatch.setattr(web.subprocess, "Popen", boom)
+    job = jm.start(str(tmp_path / "s.php"))
+    _wait(job, "error")
+    assert job.state == "error" and "engine failed: kaboom" in job.error
+    monkeypatch.undo()
+    job2 = jm.start(str(tmp_path / "s.php"))      # manager is not wedged
+    _wait(job2, "done")
+    assert job2.state == "done"
+
+def test_runtime_exception_in_reader_ends_in_error(tmp_path, monkeypatch):
+    cmd, _ = _stub_engine(tmp_path)
+    jm = web.JobManager(cmd, str(tmp_path))
+    def boom(*a, **k):
+        raise RuntimeError("select died")
+    monkeypatch.setattr(web.os, "read", boom)
+    job = jm.start(str(tmp_path / "s.php"))
+    _wait(job, "error")
+    assert job.state == "error" and "engine failed: select died" in job.error
+
+def test_timeout_kills_engine_and_manager_accepts_next(tmp_path):
+    slow = tmp_path / "hang.sh"
+    # the grandchild sleep inherits the pipes: the kill must reach the process group
+    slow.write_text("#!/usr/bin/env bash\necho started >&2\nsleep 30\n")
+    os.chmod(slow, 0o755)
+    jm = web.JobManager([str(slow)], str(tmp_path), timeout=0.5)
+    t0 = time.time()
+    job = jm.start(str(tmp_path / "s.php"))
+    _wait(job, "error", timeout=10)
+    assert job.state == "error"
+    assert job.error == "engine timed out after 0.5 s"
+    assert "started" in job.phase_lines
+    assert time.time() - t0 < 10
+    cmd, _ = _stub_engine(tmp_path)
+    jm.engine_cmd = cmd
+    job2 = jm.start(str(tmp_path / "s.php"))       # no Busy
+    _wait(job2, "done")
+    assert job2.state == "done"
+
+def test_timeout_default_is_the_module_constant(tmp_path, monkeypatch):
+    assert web.WEB_JOB_TIMEOUT == 1800
+    monkeypatch.setattr(web, "WEB_JOB_TIMEOUT", 0.3)
+    slow = tmp_path / "hang.sh"; slow.write_text("#!/usr/bin/env bash\nsleep 30\n"); os.chmod(slow, 0o755)
+    jm = web.JobManager([str(slow)], str(tmp_path))
+    job = jm.start(str(tmp_path / "s.php"))
+    _wait(job, "error", timeout=10)
+    assert job.state == "error" and "timed out" in job.error
+
+def test_non_utf8_engine_output_is_replaced_not_fatal(tmp_path):
+    s = tmp_path / "bad.sh"
+    s.write_text("#!/usr/bin/env bash\nprintf 'bad \\377 line\\n' >&2\nexit 1\n")
+    os.chmod(s, 0o755)
+    jm = web.JobManager([str(s)], str(tmp_path))
+    job = jm.start(str(tmp_path / "s.php"))
+    _wait(job, "error")
+    assert job.state == "error" and "bad \ufffd line" in job.phase_lines
