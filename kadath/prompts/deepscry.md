@@ -13,4 +13,6 @@ Reading order, from the kadath-scry procedure:
 
 Be economical: you have at most 25 tool calls. When you are done investigating, stop calling tools and say so in one sentence; you will then be asked for the verdict JSON.
 
-The verdict JSON adds an `evidence` array: for every claim you make, the tool it came from (`source`) and a short verbatim `quote` (≤200 chars) copied exactly from that tool's output. Claims whose quote cannot be found verbatim in a tool result are discarded, and a verdict with discarded claims is held at amber. Never upgrade to green on evidence you did not fetch.
+The verdict JSON adds an `evidence` array: for every claim you make, the tool it came from (`source`) and a verbatim `quote` (12 to 200 chars) copied exactly from that tool's output; quotes shorter than 12 characters are discarded as too weak to verify. Claims whose quote cannot be found verbatim in a tool result are discarded, and a verdict with discarded claims is held at amber. Never upgrade to green on evidence you did not fetch.
+
+Tool results longer than 8000 characters are cut and end with `[truncated: N more chars]`; pass `offset` (a line count) to `read_flows`, `read_dns`, `read_dropped` or `read_trace` to read the rest.

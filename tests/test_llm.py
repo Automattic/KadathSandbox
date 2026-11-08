@@ -49,6 +49,20 @@ def test_validate_against():
             llm.validate_against(SCHEMA, bad)
 
 
+def test_validate_against_rejects_non_finite_numbers():
+    for bad in (float("nan"), float("inf"), float("-inf")):
+        with pytest.raises(ValueError):
+            llm.validate_against(SCHEMA, {"verdict": "red", "n": bad})
+        with pytest.raises(ValueError):
+            llm.validate_against({"type": "number"}, bad)
+    # what json.loads hands back for NaN / Infinity
+    with pytest.raises(ValueError):
+        llm.validate_against(SCHEMA, json.loads('{"verdict": "red", "n": NaN}'))
+    with pytest.raises(ValueError):
+        llm.validate_against({"type": "number"}, True)
+    llm.validate_against({"type": "number"}, 3)
+
+
 def _fake_post(replies):
     calls = []
     def post(url, payload, timeout):

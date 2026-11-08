@@ -420,3 +420,53 @@ def test_run_proceeds_when_cavern_json_is_missing(tmp_path, monkeypatch):
     client = FakeClient(GOOD_VERDICT, ["# R\n=====DRAFT.YAR=====\nrule k { strings: $a = \"zz\" condition: $a }\n"])
     v = po.run(case, {"case_id": "FIO-7"}, client, str(root), PROMPTS, [str(eng)])
     assert v["verdict"] == "red" and v["cavern_verdict"] is None   # no cavern floor, det/model decide
+
+
+def test_final_verdict_ignores_missing_levels():
+    assert po.final_verdict("green", None, "red", None) == ("red", "cavern")
+    assert po.final_verdict("green", None, None, "green") == ("green", "agree")
+    assert po.final_verdict("amber", None) == ("amber", "agree")
+
+
+def test_finish_from_runes_keeps_deterministic_level_and_bundle(tmp_path):
+    kd = tmp_path / "kadath"; kd.mkdir()
+    runes = {"verdict": "green", "confidence": 0.8, "iocs_extra": [], "persistence": [], "reason": "looks clean"}
+    client = type("C", (), {"model": "m", "profiles": dict(llm.PROFILES)})()
+    det = {"level": "red", "reasons": ["admin user created"]}
+    v = po._finish_from_runes(str(kd), {"verdict": "green"}, runes, "llm timed out", client,
+                              det=det, run_dir="/r/FIO-7-x")
+    assert v["verdict"] == "red" and v["decided_by"] == "deterministic" and v["deterministic"] == det
+    assert v["run_dir"] == "/r/FIO-7-x" and v["coverage"] == "errored"
+    assert json.load(open(os.path.join(str(kd), "verdict.json")))["run_dir"] == "/r/FIO-7-x"
+    # a deterministic level that does not outrank the static reads changes nothing
+    v2 = po._finish_from_runes(str(kd), {"verdict": "green"}, dict(runes, verdict="red"), "x", client,
+                               det={"level": "amber", "reasons": []}, run_dir="/r")
+    assert v2["verdict"] == "red" and v2["decided_by"] == "runes" and v2["deterministic"]["level"] == "amber"
+    # engine failure path: no det, no bundle
+    v3 = po._finish_from_runes(str(kd), {"verdict": "green"}, runes, "x", client)
+    assert v3["run_dir"] == "" and v3["deterministic"]["level"] == "green"
+
+
+def test_run_llm_error_after_detonation_carries_det_and_run_dir(tmp_path, monkeypatch):
+    case, root, eng = _setup(tmp_path)
+    monkeypatch.setattr(po, "flow_bodies", lambda root, epoch: ([], None))
+
+    class Boom(FakeClient):
+        def chat(self, messages, **kw):
+            raise llm.LLMError("timed out")
+    with pytest.raises(llm.LLMError) as ei:
+        po.run(case, {"case_id": "FIO-7"}, Boom(GOOD_VERDICT, []), str(root), PROMPTS, [str(eng)])
+    assert ei.value.det["level"] == "red" and ei.value.run_dir.endswith("FIO-7-x")
+    assert os.path.exists(os.path.join(ei.value.run_dir, "evidence.json"))
+
+
+def test_drop_core_bodies_keeps_spoofed_host():
+    summ = {"network": {"flows": [
+        {"host": "api.wordpress.org", "method": "GET", "path": "/core", "wp_core": True},
+        {"host": "api.wordpress.org", "method": "POST", "path": "/c2", "wp_core": False, "host_spoofed": True},
+    ]}}
+    bodies = [{"host": "api.wordpress.org", "method": "GET", "path": "/core", "response_body": "x"},
+              {"host": "api.wordpress.org", "method": "POST", "path": "/c2", "response_body": "cmd"},
+              {"host": "evil.test", "method": "GET", "path": "/", "response_body": "y"}]
+    kept = po.drop_core_bodies(bodies, summ)
+    assert [b["path"] for b in kept] == ["/c2", "/"]

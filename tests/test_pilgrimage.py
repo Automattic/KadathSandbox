@@ -419,15 +419,25 @@ def test_run_pass_keeps_error_tail(tmp_path):
 def test_stack_recover_reports_health(monkeypatch):
     class P:
         def __init__(self, out): self.stdout = out
-    monkeypatch.setattr(pilgrimage, "sh", lambda *a, **k: P('[{"Service":"wordpress","State":"running"}]'))
-    assert pilgrimage._stack_recover() is True
     calls = []
 
-    def sh(args, **k):
-        calls.append(args)
-        return P("")
-    monkeypatch.setattr(pilgrimage, "sh", sh)
-    assert pilgrimage._stack_recover() is False and ["make", "down"] in calls and ["make", "up"] in calls
+    def fake(out):
+        def sh(args, **k):
+            calls.append(args)
+            return P(out)
+        return sh
+    # a JSON array, and one JSON object per line: wordpress running -> healthy, no restart
+    for out in ('[{"Service":"gateway","State":"running"},{"Service":"wordpress","State":"running"}]',
+                '{"Service":"gateway","State":"running"}\n{"Service":"wordpress","State":"running","Health":"healthy"}\n'):
+        monkeypatch.setattr(pilgrimage, "sh", fake(out))
+        assert pilgrimage._stack_recover() is True
+    assert ["make", "down"] not in calls
+    # wordpress exited while the gateway runs: the old substring check called this healthy
+    for out in ('[{"Service":"gateway","State":"running"},{"Service":"wordpress","State":"exited"}]',
+                '{"Service":"gateway","State":"running"}\n{"Service":"wordpress","State":"exited"}\n', ""):
+        calls.clear()
+        monkeypatch.setattr(pilgrimage, "sh", fake(out))
+        assert pilgrimage._stack_recover() is False and ["make", "down"] in calls and ["make", "up"] in calls
 
 
 def test_do_offer_runes_stand_in_on_healthy_stack(tmp_path, monkeypatch):
@@ -502,14 +512,45 @@ def test_do_offer_llm_timeout_with_reachable_ollama_uses_runes(tmp_path, monkeyp
     monkeypatch.setattr(pilgrimage, "_make_client", _client_factory(reachable=True))
     monkeypatch.setattr(pilgrimage, "free_gb", lambda p: 999.0)
     monkeypatch.setattr(pilgrimage, "_stack_up", lambda: None)
-    monkeypatch.setattr(pilgrimage.pilgrim_offer, "run",
-                        lambda *a, **k: (_ for _ in ()).throw(pilgrimage.llm.LLMError("timed out")))
+
+    def timeout_after_detonation(*a, **k):
+        # the sample ran and the deterministic verdict is red; the verdict model then timed out
+        e = pilgrimage.llm.LLMError("timed out")
+        e.det, e.run_dir = {"level": "red", "reasons": ["admin created"]}, "/r/A-bundle"
+        raise e
+    monkeypatch.setattr(pilgrimage.pilgrim_offer, "run", timeout_after_detonation)
     rc = pilgrimage.main([str(lib), "--pass", "offer"])
     m2 = manifest.Manifest(str(lib / "kadath-triage.csv")); m2.load()
     assert m2.rows["A"]["offer_status"] == "done" and m2.rows["A"]["offer_coverage"] == "errored"
-    assert m2.rows["A"]["decided_by"] == "runes"
-    # cavern(amber) vs runes(red) disagree -> not settled -> scry stays pending
+    # cavern amber, runes red, deterministic red: the real det level survives and the bundle is kept
+    assert m2.rows["A"]["final_verdict"] == "red" and m2.rows["A"]["run_dir"] == "/r/A-bundle"
+    v = json.load(open(lib / "A" / "kadath" / "verdict.json"))
+    assert v["verdict"] == "red" and v["run_dir"] == "/r/A-bundle" and v["deterministic"]["level"] == "red"
+    # cavern(amber) vs runes(red) disagree -> not settled -> scry stays pending (and can use the bundle)
     assert m2.rows["A"]["scry_status"] == "pending"
+
+
+def test_do_offer_llm_timeout_deterministic_red_beats_green_static(tmp_path, monkeypatch):
+    lib = tmp_path / "lib"; _worthy_case_with_runes(lib, "A")
+    (lib / "A" / "kadath" / "runes.json").write_text(json.dumps(
+        {"verdict": "green", "confidence": 0.9, "iocs_extra": [], "persistence": [], "reason": "clean"}))
+    (lib / "A" / "kadath" / "cavern.json").write_text(json.dumps({"verdict": "green"}))
+    cases = pilgrimage.library.walk(str(lib))
+    m = manifest.Manifest(str(lib / "kadath-triage.csv")); m.ensure_rows(cases)
+    m.update("A", cavern_status="done", cavern_worthy="true", runes_status="done"); m.flush()
+    monkeypatch.setattr(pilgrimage, "_make_client", _client_factory(reachable=True))
+    monkeypatch.setattr(pilgrimage, "free_gb", lambda p: 999.0)
+    monkeypatch.setattr(pilgrimage, "_stack_up", lambda: None)
+
+    def timeout_after_detonation(*a, **k):
+        e = pilgrimage.llm.LLMError("timed out")
+        e.det, e.run_dir = {"level": "red", "reasons": []}, "/r/A-bundle"
+        raise e
+    monkeypatch.setattr(pilgrimage.pilgrim_offer, "run", timeout_after_detonation)
+    pilgrimage.main([str(lib), "--pass", "offer"])
+    m2 = manifest.Manifest(str(lib / "kadath-triage.csv")); m2.load()
+    assert m2.rows["A"]["final_verdict"] == "red" and m2.rows["A"]["decided_by"] == "deterministic"
+    assert m2.rows["A"]["scry_status"] == "pending"    # red vs green static reads: the scry may look
 
 
 def test_do_offer_runes_fallback_agreed_red_skips_scry(tmp_path, monkeypatch):
@@ -550,3 +591,27 @@ def test_do_offer_llm_error_ollama_down_errors_the_row(tmp_path, monkeypatch):
     assert rc == 1
     m2 = manifest.Manifest(str(lib / "kadath-triage.csv")); m2.load()
     assert m2.rows["A"]["offer_status"] == "error" and m2.rows["C"]["offer_status"] == "pending"
+
+
+def test_do_scry_failed_scry_leaves_decided_by(tmp_path, monkeypatch):
+    lib = tmp_path / "lib"
+    for cid in ("A", "B"):
+        _lib_case(lib, cid)
+        kd = lib / cid / "kadath"; kd.mkdir(parents=True)
+        (kd / "verdict.json").write_text(json.dumps(
+            {"verdict": "red", "run_dir": "/r/" + cid, "confidence": 0.5, "coverage": "full",
+             "cavern_verdict": "red", "model_verdict": "green", "deterministic": {"level": "green"}}))
+    cases = pilgrimage.library.walk(str(lib))
+    m = manifest.Manifest(str(lib / "kadath-triage.csv")); m.ensure_rows(cases)
+    for cid in ("A", "B"):
+        m.update(cid, cavern_status="done", cavern_worthy="true", runes_status="done", offer_status="done",
+                 decided_by="offer", scry_status="pending")
+    m.flush()
+    monkeypatch.setattr(pilgrimage, "_make_client", _fake_client)
+    status = {"A": "unverified-claims", "B": "ok"}
+    monkeypatch.setattr(pilgrimage.deepscry, "run", lambda case, row, c, p: {
+        "verdict": "red" if case.id == "A" else "amber", "deepscry": {"status": status[case.id]}})
+    assert pilgrimage.main([str(lib), "--pass", "scry", "--no-stack"]) == 0
+    m2 = manifest.Manifest(str(lib / "kadath-triage.csv")); m2.load()
+    assert m2.rows["A"]["scry_status"] == "done" and m2.rows["A"]["decided_by"] == "offer"   # failed scry decided nothing
+    assert m2.rows["B"]["decided_by"] == "deepscry" and m2.rows["B"]["final_verdict"] == "amber"

@@ -5,6 +5,7 @@ import hashlib
 import math
 import os
 import re
+import sys
 from kadath import traceparse
 
 Case = collections.namedtuple("Case", "id dir php readme skip_reason")
@@ -41,11 +42,21 @@ def wants_wordpress(path):
     return bool(_WANTS_WP.search(text))
 
 
+def _skip_link(path):
+    # a hostile library entry may point anywhere (x.php -> /etc/passwd); never follow it
+    if os.path.islink(path):
+        print(f"kadath: skipping symlink {path}", file=sys.stderr)
+        return True
+    return False
+
+
 def walk(library_dir):
     out = []
     for name in sorted(os.listdir(library_dir)):
         d = os.path.join(library_dir, name)
-        if not os.path.isdir(d) or name.startswith(".") or name.startswith("kadath-"):
+        if name.startswith(".") or name.startswith("kadath-"):
+            continue
+        if _skip_link(d) or not os.path.isdir(d):
             continue
         phps = []
         for r, ds, fs in os.walk(d):
@@ -54,10 +65,11 @@ def walk(library_dir):
             # prune hidden dirs anywhere, and our own output dir only at the case
             # root (a sample's own nested dir named "kadath" is left alone)
             ds[:] = [x for x in ds if not x.startswith(".") and not (x == "kadath" and r == d)]
-            phps.extend(sorted(os.path.join(r, fn) for fn in fs if fn.lower().endswith(".php")))
+            phps.extend(sorted(p for p in (os.path.join(r, fn) for fn in fs if fn.lower().endswith(".php"))
+                               if not _skip_link(p)))
         phps = sorted(phps)
         readme = os.path.join(d, "README.md")
-        readme = readme if os.path.isfile(readme) else None
+        readme = readme if os.path.isfile(readme) and not _skip_link(readme) else None
         if not phps:
             out.append(Case(name, d, None, readme, "no-php"))
         elif len(phps) > 1:
