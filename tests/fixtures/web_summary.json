@@ -6,6 +6,6 @@
   "callchain": [{"function": "wp_create_user", "file": "/samples/plugins/x/x.php", "line": 12}],
   "dangerous_calls": [], "files_written": [],
   "network": {"dns": [], "flows": [], "dropped": []},
-  "artifacts": {"traces": ["/REPO/artifacts/xdebug/trace.1.xt"], "sp_dumps": [], "pcaps": []},
+  "artifacts": {"traces": ["/REPO/artifacts/xdebug/trace.1.xt"], "sp_dumps": [], "pcaps": [], "bundle": []},
   "warnings": []
 }

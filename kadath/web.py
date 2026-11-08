@@ -3,8 +3,10 @@
 the offer engine."""
 import os
 import secrets
+import shutil
 import subprocess
 import threading
+import time
 
 
 class Busy(Exception):
@@ -259,10 +261,41 @@ class Handler(http.server.BaseHTTPRequestHandler):
         pass  # quiet
 
 
+WEB_UPLOAD_MAX_AGE_DAYS = 7
+
+
+def prune_uploads(workdir, max_age_days=WEB_UPLOAD_MAX_AGE_DAYS, now=None):
+    """Remove upload dirs under <workdir>/.kadath/web older than max_age_days
+    (they hold attacker-controlled PHP). Direct children only; symlinks and
+    plain files are never followed or touched. Returns the removed paths."""
+    base = os.path.join(workdir, ".kadath", "web")
+    cutoff = (time.time() if now is None else now) - max_age_days * 86400
+    removed = []
+    try:
+        names = os.listdir(base)
+    except OSError:
+        return removed
+    for name in sorted(names):
+        p = os.path.join(base, name)
+        try:
+            if os.path.islink(p) or not os.path.isdir(p):
+                continue
+            if os.lstat(p).st_mtime < cutoff:
+                shutil.rmtree(p)
+                removed.append(p)
+        except OSError:
+            continue
+    return removed
+
+
 def serve(port=8090, engine_cmd=None, workdir=None):
     workdir = workdir or REPO_ROOT
     if engine_cmd is None:
         engine_cmd = [os.path.join(REPO_ROOT, "bin", "kadath"), "offer"]
+    pruned = prune_uploads(workdir)
+    if pruned:
+        print(f"kadath web: pruned {len(pruned)} stale upload dir(s) older than "
+              f"{WEB_UPLOAD_MAX_AGE_DAYS} days")
     httpd = http.server.ThreadingHTTPServer(("127.0.0.1", port), Handler)
     httpd.manager = JobManager(engine_cmd, workdir)
     httpd.port = port

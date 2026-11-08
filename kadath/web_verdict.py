@@ -1,5 +1,6 @@
 """Compute an at-a-glance verdict from a offering summary.json. Pure; the web
 layer returns this so the client does not decide severity."""
+from kadath.network import flag_wp_core
 
 
 def _roles_have_admin(roles):
@@ -19,7 +20,11 @@ def compute(summary):
             reasons.append(f"'{u.get('login')}' promoted to administrator")
     for f in net.get("flows", []):
         if not f.get("wp_core"):
-            reasons.append(f"outbound HTTP(S) to {f.get('host')}")
+            # WHY: a flow with no response is still an attempt to reach the host.
+            if f.get("error"):
+                reasons.append(f"outbound HTTP(S) attempt to {f.get('host')} ({f['error']})")
+            else:
+                reasons.append(f"outbound HTTP(S) to {f.get('host')}")
     for d in net.get("dropped", []):
         reasons.append(f"blocked TCP to {d.get('dst')}:{d.get('port')}")
 
@@ -27,6 +32,10 @@ def compute(summary):
         return {"level": "red", "reasons": reasons}
 
     amber = []
+    # WHY: a lookup without a connect is weaker evidence than a flow, so amber.
+    for name in net.get("dns", []):
+        if not flag_wp_core(name):
+            amber.append(f"DNS lookup of {name}")
     if summary.get("dangerous_calls"):
         amber.append(f"{len(summary['dangerous_calls'])} dangerous PHP call(s)")
     if summary.get("files_written"):

@@ -44,3 +44,26 @@ def test_same_basename_prefers_in_repo(tmp_path):
     allow = {os.path.realpath(str(good)), os.path.realpath(str(bad))}
     got = web_util.safe_artifact_path(str(repo), allow, "dup.txt")
     assert got == os.path.realpath(str(good))
+
+
+def test_bundle_entry_is_served_by_basename(tmp_path):
+    repo, summary, report = _summary_with_repo(tmp_path)
+    gz = os.path.join(report, "artifacts", "xdebug", "trace.1.xt.gz")
+    os.makedirs(os.path.dirname(gz))
+    with open(gz, "wb") as f:
+        f.write(b"gz")
+    summary["artifacts"]["bundle"] = ["artifacts/xdebug/trace.1.xt.gz"]
+    allow = web_util.artifact_allowlist(summary, report)
+    assert web_util.safe_artifact_path(repo, allow, "trace.1.xt.gz") == os.path.realpath(gz)
+
+
+def test_bundle_entry_escaping_repo_is_refused(tmp_path):
+    repo = tmp_path / "repo"
+    report = repo / "reports" / "x-1"
+    report.mkdir(parents=True)
+    (tmp_path / "secret.txt").write_text("s")      # outside the repo, exists
+    summary = {"artifacts": {"traces": [], "sp_dumps": [], "pcaps": [],
+                             "bundle": ["../../../secret.txt"]}}
+    allow = web_util.artifact_allowlist(summary, str(report))
+    assert os.path.realpath(str(tmp_path / "secret.txt")) in allow
+    assert web_util.safe_artifact_path(str(repo), allow, "secret.txt") is None

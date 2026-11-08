@@ -40,6 +40,8 @@ def artifact_allowlist(summary, report_dir):
     for key in ("traces", "sp_dumps", "pcaps"):
         for p in arts.get(key, []):
             allow.add(os.path.realpath(p))
+    for p in arts.get("bundle", []):    # durable copies, relative to the report dir
+        allow.add(os.path.realpath(os.path.join(report_dir, p)))
     for name in ("summary.json", "iocs.json", "run.env"):
         allow.add(os.path.realpath(os.path.join(report_dir, name)))
     return allow
