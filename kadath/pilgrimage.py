@@ -242,7 +242,12 @@ def main(argv):
         with open(os.path.join(case.dir, "kadath", "verdict.json")) as f:
             v = json.load(f)
         if _settled(v):
-            return {"scry_status": "skipped", "error": "red-confident"}
+            return {"scry_status": "skipped", "error": "settled: no scry needed"}
+        if not v.get("run_dir"):
+            # the Runes static read stood in for a failed run: there is no bundle
+            # to re-examine, and scrying the CWD's artifacts would be another sample's
+            return {"scry_status": "skipped",
+                    "error": "no run bundle (verdict came from the Runes static read); nothing to scry"}
         v = deepscry.run(case, row, client, PROMPTS)
         return {"scry_verdict": v["verdict"], "final_verdict": v["verdict"], "decided_by": "deepscry"}
 

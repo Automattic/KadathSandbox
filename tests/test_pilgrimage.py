@@ -61,7 +61,7 @@ def test_run_pass_breaker(tmp_path):
 
 def test_run_pass_skip_result(tmp_path):
     m = _m(tmp_path, 1)
-    counts = pilgrimage.run_pass("scry", m, list(m.rows.values()), lambda row: {"scry_status": "skipped", "error": "red-confident"})
+    counts = pilgrimage.run_pass("scry", m, list(m.rows.values()), lambda row: {"scry_status": "skipped", "error": "settled: no scry needed"})
     assert m.rows["C0"]["scry_status"] == "skipped" and counts["skipped"] == 1
 
 
@@ -247,7 +247,101 @@ def test_main_scry_skips_red_confident_inside_pass(tmp_path, monkeypatch):
     m2 = manifest.Manifest(str(lib / "kadath-triage.csv"))
     m2.load()
     assert m2.rows["A"]["scry_status"] == "skipped"
-    assert m2.rows["A"]["error"] == "red-confident"
+    assert m2.rows["A"]["error"] == "settled: no scry needed"
+
+
+def test_main_scry_skips_runes_only_verdict_without_bundle(tmp_path, monkeypatch):
+    # an unsettled verdict from the Runes stand-in has run_dir "": scrying it would
+    # read the CWD's live artifacts (another sample's evidence), so it is skipped
+    lib = tmp_path / "lib"
+    _lib_case(lib, "A")
+    cases = pilgrimage.library.walk(str(lib))
+    m = manifest.Manifest(str(lib / "kadath-triage.csv"))
+    m.ensure_rows(cases)
+    m.update("A", cavern_status="done", cavern_worthy="true", offer_status="done", offer_verdict="red",
+             final_verdict="red", decided_by="runes")
+    m.flush()
+    kd = lib / "A" / "kadath"
+    kd.mkdir(parents=True)
+    (kd / "verdict.json").write_text(json.dumps({"verdict": "red", "cavern_verdict": "amber", "runes_verdict": "red",
+                                                 "model_verdict": None, "deterministic": {"level": "green"},
+                                                 "confidence": 0.9, "coverage": "errored", "run_dir": "",
+                                                 "decided_by": "runes"}))
+    monkeypatch.setattr(pilgrimage, "_make_client", _fake_client)
+    calls = []
+    monkeypatch.setattr(pilgrimage.deepscry, "run", lambda *a, **k: calls.append(1))
+
+    rc = pilgrimage.main([str(lib), "--pass", "scry", "--no-stack"])
+    assert rc == 0 and calls == []
+
+    m2 = manifest.Manifest(str(lib / "kadath-triage.csv"))
+    m2.load()
+    assert m2.rows["A"]["scry_status"] == "skipped"
+    assert "no run bundle" in m2.rows["A"]["error"]
+    assert m2.rows["A"]["final_verdict"] == "red" and m2.rows["A"]["decided_by"] == "runes"
+
+
+def test_main_offer_routes_unexercised_green_to_scry(tmp_path, monkeypatch):
+    lib = tmp_path / "lib"
+    for cid in ("A", "B"):
+        _lib_case(lib, cid)
+    cases = pilgrimage.library.walk(str(lib))
+    m = manifest.Manifest(str(lib / "kadath-triage.csv"))
+    m.ensure_rows(cases)
+    for cid in ("A", "B"):
+        m.update(cid, cavern_status="done", cavern_worthy="true", runes_status="done")
+    m.flush()
+
+    def green(cov, rd):
+        return {"verdict": "green", "confidence": 0.9, "coverage": cov, "run_dir": rd, "decided_by": "agree",
+                "cavern_verdict": "green", "runes_verdict": "green", "model_verdict": "green",
+                "deterministic": {"level": "green"}}
+    offer_results = {"A": green("stubbed", "/r/A"), "B": green("full", "/r/B")}
+
+    def fake_offer(case, row, client, root, prompts_dir, engine_cmd):
+        v = offer_results[case.id]
+        kd = os.path.join(case.dir, "kadath")
+        os.makedirs(kd, exist_ok=True)
+        with open(os.path.join(kd, "verdict.json"), "w") as f:
+            json.dump(v, f)
+        return v
+
+    monkeypatch.setattr(pilgrimage, "_make_client", _fake_client)
+    monkeypatch.setattr(pilgrimage, "free_gb", lambda path: 999.0)
+    monkeypatch.setattr(pilgrimage.pilgrim_offer, "run", fake_offer)
+    assert pilgrimage.main([str(lib), "--pass", "offer", "--no-stack"]) == 0
+
+    m2 = manifest.Manifest(str(lib / "kadath-triage.csv"))
+    m2.load()
+    assert m2.rows["A"]["offer_verdict"] == "green" and m2.rows["A"]["offer_coverage"] == "stubbed"
+    assert m2.rows["A"]["scry_status"] == "pending"        # runtime silence on stand-ins is not evidence
+    assert m2.rows["B"]["scry_status"] == "skipped"        # a green that actually ran, all agreeing
+    assert [r["case_id"] for r in m2.pending("scry")] == ["A"]
+
+
+def test_do_scry_unsettled_runes_stand_in_never_reaches_deepscry(tmp_path, monkeypatch):
+    # end to end from the offer pass: engine fails, the Runes stand in disagreeing
+    # with the Cavern (unsettled, run_dir ""), and the Scry pass must skip it
+    lib = tmp_path / "lib"; _worthy_case_with_runes(lib, "A")
+    cases = pilgrimage.library.walk(str(lib))
+    m = manifest.Manifest(str(lib / "kadath-triage.csv")); m.ensure_rows(cases)
+    m.update("A", cavern_status="done", cavern_worthy="true", runes_status="done"); m.flush()
+    monkeypatch.setattr(pilgrimage, "_make_client", _client_factory(reachable=True))
+    monkeypatch.setattr(pilgrimage, "free_gb", lambda p: 999.0)
+    monkeypatch.setattr(pilgrimage, "_stack_up", lambda: None)
+    monkeypatch.setattr(pilgrimage, "_stack_recover", lambda: True)
+    monkeypatch.setattr(pilgrimage.pilgrim_offer, "run",
+                        lambda *a, **k: (_ for _ in ()).throw(pilgrimage.pilgrim_offer.EngineError("PHP Parse error")))
+    calls = []
+    monkeypatch.setattr(pilgrimage.deepscry, "run", lambda *a, **k: calls.append(1))
+    assert pilgrimage.main([str(lib), "--pass", "offer"]) == 0
+    m2 = manifest.Manifest(str(lib / "kadath-triage.csv")); m2.load()
+    assert m2.rows["A"]["scry_status"] == "pending" and m2.rows["A"]["run_dir"] == ""
+    assert pilgrimage.main([str(lib), "--pass", "scry", "--no-stack"]) == 0
+    m3 = manifest.Manifest(str(lib / "kadath-triage.csv")); m3.load()
+    assert calls == [] and m3.rows["A"]["scry_status"] == "skipped"
+    assert "no run bundle" in m3.rows["A"]["error"]
+    assert m3.rows["A"]["final_verdict"] == "red" and m3.rows["A"]["decided_by"] == "runes"
 
 
 def test_main_engine_error_marks_error_and_recovers_once(tmp_path, monkeypatch):

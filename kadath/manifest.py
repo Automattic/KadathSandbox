@@ -88,8 +88,10 @@ class Manifest:
                                              and r["cavern_worthy"] == "true"
                                              and r["runes_status"] == "done"):
                 continue
-            if pass_name == "scry" and not (r["offer_status"] == "done" and
-                                            r["offer_verdict"] in ("amber", "red")):
+            # the status column is the routing: the orchestrator marks a settled
+            # case scry_status=skipped, so a pending one (amber, a disagreement, an
+            # unexercised green) must reach the Scry whatever its verdict
+            if pass_name == "scry" and r["offer_status"] != "done":
                 continue
             out.append(r)
         return out

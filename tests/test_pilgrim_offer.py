@@ -277,6 +277,41 @@ def test_run_coverage_stubbed_and_cavern_floor(tmp_path, monkeypatch):
     assert v["coverage"] == "unauthenticated"
 
 
+def test_run_login_failure_forces_unauthenticated(tmp_path, monkeypatch):
+    stubs = [{"path": "/samples/webroot/functions/functions.php", "kind": "include", "round": 1}]
+    # the engine saw the admin login fail: the model's "full" cannot stand, and
+    # the verdict records why
+    v, _ = _run_with_meta(tmp_path, monkeypatch, {"stubs": [], "fatal": False, "login_ok": False},
+                          {"verdict": "green"}, model_coverage="full")
+    assert v["coverage"] == "unauthenticated" and v["login_ok"] is False
+    # also over stubbing; a fatal still beats it
+    v, _ = _run_with_meta(tmp_path, monkeypatch, {"stubs": stubs, "fatal": False, "login_ok": False},
+                          {"verdict": "green"})
+    assert v["coverage"] == "unauthenticated"
+    v, _ = _run_with_meta(tmp_path, monkeypatch, {"stubs": [], "fatal": True, "login_ok": False},
+                          {"verdict": "green"})
+    assert v["coverage"] == "errored"
+
+
+def test_run_login_ok_true_or_absent_leaves_coverage_logic(tmp_path, monkeypatch):
+    stubs = [{"path": "/samples/webroot/functions/functions.php", "kind": "include", "round": 1}]
+    v, _ = _run_with_meta(tmp_path, monkeypatch, {"stubs": [], "fatal": False, "login_ok": True},
+                          {"verdict": "green"})
+    assert v["coverage"] == "full" and v["login_ok"] is True
+    v, _ = _run_with_meta(tmp_path, monkeypatch, {"stubs": [], "fatal": False, "login_ok": None},
+                          {"verdict": "green"})
+    assert v["coverage"] == "full" and v["login_ok"] is None
+    v, _ = _run_with_meta(tmp_path, monkeypatch, {"stubs": stubs, "fatal": False, "login_ok": True},
+                          {"verdict": "green"})
+    assert v["coverage"] == "stubbed"
+    v, _ = _run_with_meta(tmp_path, monkeypatch, {"stubs": [], "fatal": False, "login_ok": True},
+                          {"verdict": "green", "needs_input": "password"})
+    assert v["coverage"] == "unauthenticated"
+    # an engine that predates login_ok emits nothing: recorded as None
+    v, _ = _run_with_meta(tmp_path, monkeypatch, {"stubs": [], "fatal": False}, {"verdict": "green"})
+    assert v["coverage"] == "full" and v["login_ok"] is None
+
+
 def test_run_cavern_verdict_is_a_floor(tmp_path, monkeypatch):
     # deterministic green (fixture has an admin user -> red), so make the model green and cavern amber:
     # the fixture's deterministic red wins regardless; test the cavern floor via final_verdict directly
