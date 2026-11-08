@@ -15,7 +15,7 @@ cat > "$REP/summary.json" <<JSON
  "callchain":[{"function":"wp_create_user","file":"/samples/plugins/x/x.php","line":12}],
  "dangerous_calls":[],"files_written":[],
  "network":{"dns":[],"flows":[],"dropped":[]},
- "artifacts":{"traces":[],"sp_dumps":[],"pcaps":[]},"warnings":[]}
+ "artifacts":{"traces":[],"sp_dumps":[],"pcaps":[],"bundle":[]},"warnings":[]}
 JSON
 echo '{"sample":{"filename":"x.php"},"offered_utc":"2026-09-05T00:00:00Z","classification":"wp-sample/unknown","network":{"observed":false},"indicators":[{"type":"wp_user","value":"sys_maint"}]}' > "$REP/iocs.json"
 echo "$REP/summary.json"

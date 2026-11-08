@@ -56,10 +56,13 @@ def build_iocs(sample, run_utc, classification, db_diff, files_written,
         if not f.get("wp_core"):
             u = f["host"] + f["path"]
             urls.append(u)
-            add("url", u, notes=f["method"], evidence="flows.mitm")
+            notes = f["method"]
+            if f.get("error"):
+                notes += f" (connect failed: {f['error']})"
+            add("url", u, notes=notes, evidence="flows.mitm")
     for d in network.get("dropped", []):
         ips.append(d["dst"])
-        add("ip", f"{d['dst']}:{d['port']}", notes="blocked egress", evidence="dropped.log")
+        add("ip", d["dst"], notes=f"blocked egress to port {d['port']}", evidence="dropped.log")
 
     return {
         "sample": sample,

@@ -130,6 +130,11 @@ services:
     pids_limit: 512
     mem_limit: 1g
     cpus: 2
+    # A sample shares supervisord's uid and can kill it; without this the stack stays down until
+    # `make up`. Safe for containment: the network namespace belongs to `wpnet`, so netguard's
+    # iptables rules survive a restart, and entrypoint.sh step 7 refuses to start unless the single
+    # default route is via 172.30.0.2.
+    restart: unless-stopped
     tmpfs:
       # 1777, not the default 1755: the container runs as uid 33 and the entrypoint has to
       # create /run/php, /run/nginx and /run/supervisor under a tmpfs root Docker owns as root.

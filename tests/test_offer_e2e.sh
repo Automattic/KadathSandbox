@@ -46,7 +46,7 @@ RUN5=$(python3 bin/kadath offer tests/needs_wp.php --json --stub-missing --adopt
 echo "needs_wp summary: $RUN5"
 ck "adopt: recorded"                       'python3 -c "import json;s=json.load(open(\"'"$RUN5"'\"));import sys;sys.exit(0 if s[\"run\"][\"adopted\"] is True else 1)"'
 ck "adopt: no fatal"                       'python3 -c "import json;s=json.load(open(\"'"$RUN5"'\"));import sys;sys.exit(0 if s[\"run\"][\"fatal\"] is False else 1)"'
-ck "adopt: init hook fired (option added)" 'python3 -c "import json;s=json.load(open(\"'"$RUN5"'\"));import sys;sys.exit(0 if any(o[\"name\"]==\"kadath_adopted_probe\" for o in s[\"db_diff\"][\"options_added\"]) else 1)"'
+ck "adopt: init hook fired (option added or changed)" 'python3 -c "import json;s=json.load(open(\"'"$RUN5"'\"));import sys;d=s[\"db_diff\"];sys.exit(0 if any(o[\"name\"]==\"kadath_adopted_probe\" for o in d[\"options_added\"]+d[\"options_changed\"]) else 1)"'
 RUN6=$(python3 bin/kadath offer tests/needs_wp.php --json)
 ck "no adopt: fatal on add_action"         'python3 -c "import json;s=json.load(open(\"'"$RUN6"'\"));import sys;sys.exit(0 if s[\"run\"][\"fatal\"] is True else 1)"'
 

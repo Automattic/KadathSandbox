@@ -51,3 +51,46 @@ def test_busy_rejects_second(tmp_path):
     import pytest
     with pytest.raises(web.Busy):
         jm2.start(str(tmp_path / "s.php"))
+
+
+def _web_dir(tmp_path):
+    d = tmp_path / ".kadath" / "web"
+    d.mkdir(parents=True)
+    return d
+
+def test_prune_uploads_removes_old_keeps_fresh(tmp_path):
+    d = _web_dir(tmp_path)
+    old, fresh = d / "old", d / "fresh"
+    for x in (old, fresh):
+        x.mkdir()
+        (x / "sample.php").write_text("<?php")
+    t = time.time() - 8 * 86400
+    os.utime(old, (t, t))
+    removed = web.prune_uploads(str(tmp_path))
+    assert removed == [str(old)]
+    assert not old.exists() and fresh.exists()
+
+def test_prune_uploads_does_not_follow_symlinks(tmp_path):
+    d = _web_dir(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "keep.txt").write_text("k")
+    link = d / "link"
+    os.symlink(str(outside), str(link))
+    t = time.time() - 30 * 86400
+    os.utime(outside, (t, t))
+    os.utime(str(link), (t, t), follow_symlinks=False)
+    assert web.prune_uploads(str(tmp_path)) == []
+    assert (outside / "keep.txt").exists() and os.path.islink(str(link))
+
+def test_prune_uploads_ignores_plain_files(tmp_path):
+    d = _web_dir(tmp_path)
+    f = d / "stray.txt"
+    f.write_text("x")
+    t = time.time() - 30 * 86400
+    os.utime(f, (t, t))
+    assert web.prune_uploads(str(tmp_path)) == []
+    assert f.exists()
+
+def test_prune_uploads_missing_dir(tmp_path):
+    assert web.prune_uploads(str(tmp_path)) == []

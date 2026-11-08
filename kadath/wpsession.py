@@ -14,6 +14,8 @@ class WpSession:
         self.opener = urllib.request.build_opener(
             urllib.request.HTTPCookieProcessor(self.jar))
         self.actions = []
+        # None = no login attempted; True/False = the last login's real outcome
+        self.logged_in = None
 
     def _req(self, path, data=None):
         url = self.base + path
@@ -35,7 +37,10 @@ class WpSession:
             {"log": user, "pwd": pw, "wp-submit": "Log In", "testcookie": "1"})
         self._req("/wp-login.php")  # set the test cookie
         code = self._req("/wp-login.php", body)
-        self.actions.append(f"LOGIN {user} -> {code}")
+        # WordPress sets wordpress_logged_in_* only on success; the HTTP code is
+        # useless because urllib follows the failure's 200 and the success's 302->200
+        self.logged_in = any(c.name.startswith("wordpress_logged_in_") for c in self.jar)
+        self.actions.append(f"LOGIN {user} -> {code} {'ok' if self.logged_in else 'FAILED'}")
         return code
 
     def get(self, path):

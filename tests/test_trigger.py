@@ -27,3 +27,15 @@ def test_execute_runs_actions_in_order():
             recipe.Action("post", "/b", "x=1")]
     trigger.execute(s, acts)
     assert s.calls == [("login", "admin", "sandbox"), ("get", "/a"), ("post", "/b", "x=1")]
+
+
+def test_default_actions_plugin_uses_given_login():
+    d = detect.Detected("plugin", "p", "samples/plugins/p")
+    mine = recipe.Action("login", "boss", "s3cret")
+    acts = trigger.default_actions(d, mine)
+    assert acts[0] == mine
+    assert [a.a for a in acts[1:]] == ["/", "/wp-admin/"]
+    assert trigger.default_actions(d)[0] == recipe.Action("login", "admin", "sandbox")
+    # themes and webshells never log in: the login is ignored
+    t = detect.Detected("theme", "t", "samples/themes/t")
+    assert trigger.default_actions(t, mine) == [recipe.Action("get", "/")]

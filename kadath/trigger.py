@@ -5,9 +5,11 @@ from kadath import recipe
 _DEFAULT_LOGIN = recipe.Action("login", "admin", "sandbox")
 
 
-def default_actions(detected):
+def default_actions(detected, login=None):
+    """login is a recipe.Action("login", user, pw); None falls back to the
+    stock sandbox admin."""
     if detected.type in ("plugin", "directory-plugin"):
-        return [_DEFAULT_LOGIN, recipe.Action("get", "/"), recipe.Action("get", "/wp-admin/")]
+        return [login or _DEFAULT_LOGIN, recipe.Action("get", "/"), recipe.Action("get", "/wp-admin/")]
     if detected.type in ("theme", "directory-theme"):
         return [recipe.Action("get", "/")]
     # webshell / loose php

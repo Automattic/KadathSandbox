@@ -260,12 +260,15 @@ def run(case, row, client, root, prompts_dir, engine_cmd):
                      profile="offer", json_schema=VERDICT_SCHEMA, think=False,
                      validate=lambda o: llm.validate_against(VERDICT_SCHEMA, o))
     mv = r1["parsed"]
-    # coverage: a fatal beats everything; a sample that never got its password
-    # ran only its idle path; a sample that ran against empty stand-ins is
-    # "stubbed" — none of these can settle a case (the orchestrator checks)
+    # coverage: a fatal beats everything; a failed admin login or a sample that
+    # never got its password ran only its idle path; a sample that ran against
+    # empty stand-ins is "stubbed" — none of these can settle a case (the
+    # orchestrator checks)
     coverage = mv["coverage"]
     if fatal:
         coverage = "errored"
+    elif run_meta.get("login_ok") is False:
+        coverage = "unauthenticated"     # the engine saw the admin login fail: nothing behind it ran
     elif cav.get("needs_input", "none") not in ("none",) and coverage in ("full", "stubbed"):
         coverage = "unauthenticated"
     elif stubs_made and coverage in ("full", "errored"):
@@ -315,7 +318,7 @@ def run(case, row, client, root, prompts_dir, engine_cmd):
     out = {"verdict": level, "decided_by": decided_by, "confidence": mv["confidence"],
            "deterministic": det, "model_verdict": mv["verdict"], "cavern_verdict": cav.get("verdict"),
            "coverage": coverage, "stubs": stubs_made, "adopted": run_meta.get("adopted", False),
-           "fatals": run_meta.get("fatals", []),
+           "fatals": run_meta.get("fatals", []), "login_ok": run_meta.get("login_ok"),
            "runes_verdict": (runes_read or {}).get("verdict"),
            "iocs_extra": mv["iocs_extra"], "persistence": mv["persistence"], "reason": mv["reason"],
            "yara": yara_status, "run_dir": run_dir, "model": client.model,

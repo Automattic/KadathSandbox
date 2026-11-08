@@ -13,7 +13,22 @@ RUN apt-get update \
 
 RUN docker-php-ext-configure gd --with-jpeg --with-webp --with-freetype \
     && docker-php-ext-install -j"$(nproc)" mysqli gd zip exif intl bcmath \
-    && pecl install "xdebug-${XDEBUG_VERSION}" \
+    && rm -rf /tmp/pear
+
+# Xdebug from the GitHub tag archive, checksum-verified (GitHub keeps tag archives
+# byte-stable). `pecl install` needs pecl.php.net to answer and the xdebug.org tarball
+# needs xdebug.org; on this build host neither was reachable from inside the Docker
+# build network while github.com and wordpress.org were, so the build pins the archive
+# itself, like the WordPress tarball below. Bumping XDEBUG_VERSION means re-pinning
+# XDEBUG_SHA256 (sha256sum of https://github.com/xdebug/xdebug/archive/refs/tags/<v>.tar.gz).
+ARG XDEBUG_SHA256=954e56021668121ecc50b92d2ad1ce945f22ecf81ffc5bb5835219485b12ef5f
+RUN curl -fsSL -o /tmp/xdebug.tgz "https://github.com/xdebug/xdebug/archive/refs/tags/${XDEBUG_VERSION}.tar.gz" \
+    && echo "${XDEBUG_SHA256}  /tmp/xdebug.tgz" | sha256sum -c - \
+    && tar -xzf /tmp/xdebug.tgz -C /usr/src \
+    && cd "/usr/src/xdebug-${XDEBUG_VERSION}" \
+    && phpize && ./configure --enable-xdebug \
+    && make -j"$(nproc)" && make install \
+    && cd / && rm -rf "/usr/src/xdebug-${XDEBUG_VERSION}" /tmp/xdebug.tgz \
     && docker-php-ext-enable xdebug
 
 # git is a build-time dependency of this layer only: it is installed, used for the

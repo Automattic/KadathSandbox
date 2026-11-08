@@ -69,7 +69,9 @@ async function renderReport(id) {
 
   r.appendChild(el("h3", "Network — flows"));
   r.appendChild(table(["host", "method", "path", "status"],
-    summary.network.flows.map(f => [f.host, f.method, f.path, f.status]),
+    summary.network.flows.map(f => [f.host, f.method, f.path,
+      // no response: show why instead of a blank cell (textContent via el())
+      f.status == null && f.error ? { text: "error: " + f.error, cls: "flowerr" } : f.status]),
     () => null));   // wp_core dimming applied below
   // dim wp_core rows
   const flowRows = r.querySelectorAll("table:last-of-type tbody tr");
@@ -83,8 +85,11 @@ async function renderReport(id) {
     (iocs.indicators || []).map(i => [i.type, i.value, i.notes || ""])));
 
   r.appendChild(el("h3", "Artifacts"));
-  const arts = [].concat(summary.artifacts.traces, summary.artifacts.sp_dumps, summary.artifacts.pcaps,
-    ["summary.json", "iocs.json"]);
+  const bundle = summary.artifacts.bundle;
+  const useBundle = Array.isArray(bundle) && bundle.length > 0;
+  const arts = (useBundle ? bundle
+    : [].concat(summary.artifacts.traces, summary.artifacts.sp_dumps, summary.artifacts.pcaps))
+    .concat(["summary.json", "iocs.json"]);
   const links = el("p");
   for (const a of arts) {
     const base = a.split("/").pop();
@@ -93,5 +98,6 @@ async function renderReport(id) {
     links.appendChild(link);
   }
   r.appendChild(links);
+  if (useBundle) r.appendChild(el("p", "Artifacts are this run's bundle under the report dir.", "note"));
   r.appendChild(el("p", "Report dir: " + report_dir, "note"));
 }

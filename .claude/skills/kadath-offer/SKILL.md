@@ -39,7 +39,7 @@ mkdir -p "$RUN"
 
 `kadath-scry` reads `$RUN/run.env` and filters every artifact by `RUN_EPOCH`, so the run marker is the contract between the two skills. Record `RUN` and `RUN_EPOCH` and pass them to analysis.
 
-Preserve the run before you leave. If you drove this through the `bin/kadath offer` engine, it already bundled the run's evidence (traces gzipped) into `reports/<slug>-<ts>/artifacts/` and cleared prior traces so `artifacts/` holds only this run. If you staged by hand, run `make snapshot` (it gzips traces into `snapshots/<ts>/`). Either way you have a durable copy: the sample runs as the uid that owns `artifacts/`, so it can delete its own traces, and the bundle is what makes that a nuisance, not a loss.
+Preserve the run before you leave. If you drove this through the `bin/kadath offer` engine, it already bundled the run's evidence (traces gzipped) into `reports/<slug>-<ts>/artifacts/` and cleared prior traces so `artifacts/` holds only this run. If you staged by hand, run `make snapshot` (it gzips traces into `snapshots/<ts>/`). The engine's bundle holds only this run's slice of the append-only logs (`dns.log`, `dropped.log`, `php-error.log`, `nginx-access.log`, `flows.mitm`) and this run's packets from the live pcap. Either way you have a durable copy: the sample runs as the uid that owns `artifacts/`, so it can delete its own traces, and the bundle is what makes that a nuisance, not a loss.
 
 ## Stage and trigger
 
@@ -49,6 +49,8 @@ The two rules that catch everyone:
 
 - **Activation and CLI are not the traced path by default.** `docker compose exec wordpress wp ...` runs with Xdebug off and `--skip-plugins`, so it neither traces the sample nor loads it. Use it for the unfiltered database ground truth (`wp user list`, `wp option get`), never as your trigger.
 - **Most WordPress backdoors act on `init` / `admin_init`, not on activation.** A single ordinary page view after the plugin is active usually captures the whole payload. Trigger with real HTTP requests to `http://127.0.0.1:8088/...`; each request writes one Xdebug trace.
+
+The engine's default plugin trigger logs in with `WP_ADMIN_USER` / `WP_ADMIN_PASSWORD` (environment, then `.env`). Check `run.login_ok` in `summary.json` (`true`, `false`, or `null` if no login was attempted): `false` means the sample ran unauthenticated, so a quiet result says nothing about its admin-side behaviour. The engine also puts the WordPress docroot and the database residue (options, cron events, posts, extra users, dead `active_plugins` entries) back from a recorded baseline between offerings; `--reset` is still the full clean slate when a changed stock-option value, a custom table or admin usermeta from the previous sample matters.
 
 ## When it has run
 

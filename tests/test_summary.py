@@ -39,3 +39,30 @@ def test_iocs_network_not_observed_when_only_wpcore():
         network={"dns": ["api.wordpress.org"], "flows": [{"host": "api.wordpress.org", "method": "POST", "path": "/x", "status": 200, "wp_core": True}], "dropped": []},
         credentials=[])
     assert i["network"]["observed"] is False
+
+def _iocs(network):
+    return summary.build_iocs(
+        sample={"filename": "x.php", "sha256": "a"*64, "md5": "b"*32, "size_bytes": 10},
+        run_utc="t", classification="c", db_diff=_db(), files_written=[],
+        network=network, credentials=[])
+
+def test_iocs_errored_flow_keeps_url_with_attempt_note():
+    i = _iocs({"dns": [], "dropped": [], "flows": [
+        {"host": "dead.example", "method": "GET", "path": "/x", "status": None,
+         "error": "Connection refused", "wp_core": False}]})
+    u = [x for x in i["indicators"] if x["type"] == "url"][0]
+    assert u["value"] == "dead.example/x"
+    assert u["notes"] == "GET (connect failed: Connection refused)"
+    assert i["network"]["observed"] is True
+
+def test_iocs_ok_flow_notes_unchanged():
+    i = _iocs({"dns": [], "dropped": [], "flows": [
+        {"host": "e.example", "method": "POST", "path": "/", "status": 200, "error": None, "wp_core": False}]})
+    assert [x for x in i["indicators"] if x["type"] == "url"][0]["notes"] == "POST"
+
+def test_iocs_ip_is_bare_address_port_in_notes():
+    i = _iocs({"dns": [], "flows": [], "dropped": [{"dst": "1.1.1.1", "port": 6667}]})
+    ip = [x for x in i["indicators"] if x["type"] == "ip"][0]
+    assert ip["value"] == "1.1.1.1"
+    assert ip["notes"] == "blocked egress to port 6667"
+    assert i["network"]["ips"] == ["1.1.1.1"]

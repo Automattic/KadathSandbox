@@ -46,6 +46,13 @@ def test_toolbox_reads_and_caps(tmp_path):
     assert tb.calls == 12 and len(tb.outputs) == 12
 
 
+def test_toolbox_refuses_empty_run_dir(tmp_path):
+    # "" would join to a CWD-relative artifacts/xdebug: another sample's evidence
+    for bad in ("", None):
+        with pytest.raises(ValueError, match="needs a run bundle"):
+            deepscry.ToolBox(bad, str(tmp_path / "s.php"))
+
+
 def test_verify_claims():
     outputs = ["line with zz_maint here", "other"]
     ev = [{"claim": "creates admin", "source": "read_trace", "quote": "zz_maint"},

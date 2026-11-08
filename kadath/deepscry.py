@@ -45,6 +45,10 @@ SCRY_SCHEMA["properties"]["evidence"] = {"type": "array", "items": {
 
 class ToolBox:
     def __init__(self, run_dir, sample_path):
+        # an empty run_dir would join to a CWD-relative path, i.e. the live
+        # artifacts of whatever sample ran last: evidence from another sample
+        if not run_dir:
+            raise ValueError("deepscry needs a run bundle; run_dir is empty")
         self.run_dir, self.sample_path = run_dir, sample_path
         self.outputs, self.calls = [], 0
         try:

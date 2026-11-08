@@ -3,6 +3,7 @@ collect, emit. Shells out for all Docker/Make/wp work; touches no containment
 config."""
 import argparse
 import fcntl
+import fnmatch
 import glob
 import gzip
 import hashlib
@@ -14,7 +15,7 @@ import subprocess
 import sys
 import time
 from datetime import datetime, timezone
-from kadath import stubs
+from kadath import stubs, pcapslice
 
 # Artifact file types worth compressing in a run bundle. Xdebug traces are the
 # bulk (a page view is ~200 MB of tab-separated text, ~16x smaller gzipped); the
@@ -89,6 +90,31 @@ def _record_selftest():
     open(os.path.join(ROOT, ".kadath", "selftest-pass"), "w").write(_build_id())
 
 
+def _admin_credentials():
+    """The WordPress admin the sandbox was installed with: the process
+    environment first, then ROOT/.env, then the stock sandbox login. Per key."""
+    env = {}
+    try:
+        with open(os.path.join(ROOT, ".env")) as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                k = k.strip()
+                if k.startswith("export "):
+                    k = k[len("export "):].strip()
+                v = v.strip()
+                if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"'":
+                    v = v[1:-1]
+                env[k] = v
+    except OSError:
+        pass
+    user = os.environ.get("WP_ADMIN_USER") or env.get("WP_ADMIN_USER") or "admin"
+    pw = os.environ.get("WP_ADMIN_PASSWORD") or env.get("WP_ADMIN_PASSWORD") or "sandbox"
+    return user, pw
+
+
 def _dbstate():
     users = _wp(["--skip-plugins", "user", "list",
                  "--fields=ID,user_login,user_email,roles", "--format=json"]) or "[]"
@@ -97,11 +123,55 @@ def _dbstate():
     return dbdiff.state_from_json(users, options, cron)
 
 
-def _bundle_artifacts(src, dest, epoch):
+def _dbstate_or_warn(before, warnings):
+    """The post-trigger DB state. A sample running as uid 33 shares it with
+    supervisord and can kill the container (kill 1); that is a result, not a
+    crash: report it and fall back to the before state (an empty diff)."""
+    try:
+        return _dbstate()
+    except ShellError:
+        warnings.append("wordpress container unreachable after the trigger (the sample may have "
+                        "killed php-fpm or supervisord); DB diff unavailable")
+        return before
+
+
+def _wp_started_at():
+    """The wordpress container's State.StartedAt, or "" when unknown. A restart
+    during a run changes it; a fast restart can make the after-state readable."""
+    try:
+        cid = sh(["docker", "compose", "ps", "-q", "wordpress"], cwd=ROOT).stdout.strip()
+        if not cid:
+            return ""
+        return sh(["docker", "inspect", "-f", "{{.State.StartedAt}}", cid],
+                  cwd=ROOT).stdout.strip()
+    except ShellError:
+        return ""
+
+
+# Append-only logs and the flow file are held open by long-lived containers and
+# never truncated, so a bundle copies only the bytes appended since the run began.
+_PCAP_GLOB = "pcap/*.pcap*"
+_FLOWS = "mitm/flows.mitm"
+_TNETSTRING_START = re.compile(rb"\d+:")
+
+
+def _flows_tail_ok(fp, offset):
+    """A mitmproxy flow file is concatenated tnetstrings; a tail is only valid
+    if it begins on a record boundary: ASCII digits then ':'."""
+    with open(fp, "rb") as f:
+        f.seek(offset)
+        return _TNETSTRING_START.match(f.read(32)) is not None
+
+
+def _bundle_artifacts(src, dest, epoch, offsets=None):
     """Copy every artifact file with mtime >= epoch (this run's) from src into
-    dest, gzipping traces/logs and copying the rest verbatim. Pure filesystem;
-    no Docker, so it is unit-testable. Returns the list of relative dest paths."""
-    written = []
+    dest, gzipping traces/logs and copying the rest verbatim. offsets maps a
+    path relative to src to the byte offset recorded before the trigger: such a
+    file contributes only its tail; the live pcap slice is cut to this run's
+    packets. Pure filesystem; no Docker, so it is unit-testable. Returns
+    (relative dest paths, warnings)."""
+    offsets = offsets or {}
+    written, warnings = [], []
     for r, _dirs, files in os.walk(src):
         for fn in files:
             if fn == ".gitkeep":
@@ -114,24 +184,54 @@ def _bundle_artifacts(src, dest, epoch):
                 continue
             rel = os.path.relpath(fp, src)
             os.makedirs(os.path.join(dest, os.path.dirname(rel)), exist_ok=True)
+            if fnmatch.fnmatch(rel, _PCAP_GLOB):
+                w = pcapslice.slice_pcap(fp, os.path.join(dest, rel), epoch)
+                if w:
+                    warnings.append(w)
+                written.append(rel)
+                continue
+            start = 0
+            if rel in offsets:
+                start = offsets[rel] or 0
+                try:
+                    size = os.path.getsize(fp)
+                except OSError:
+                    continue
+                if start > size:
+                    warnings.append(f"{rel}: shrank below its recorded offset; copied the whole file")
+                    start = 0
+                elif start == size:
+                    continue    # nothing appended during this run
+                elif rel == _FLOWS and start and not _flows_tail_ok(fp, start):
+                    warnings.append(f"{rel}: offset {start} is not a flow record boundary; "
+                                    "copied the whole file")
+                    start = 0
             if fn.endswith(_GZIP_EXT):
                 out = os.path.join(dest, rel) + ".gz"
                 with open(fp, "rb") as fi, gzip.open(out, "wb") as fo:
+                    fi.seek(start)
                     shutil.copyfileobj(fi, fo)
                 written.append(rel + ".gz")
+            elif start:
+                with open(fp, "rb") as fi, open(os.path.join(dest, rel), "wb") as fo:
+                    fi.seek(start)
+                    shutil.copyfileobj(fi, fo)
+                written.append(rel)
             else:
                 shutil.copy2(fp, os.path.join(dest, rel))
                 written.append(rel)
-    return written
+    return written, warnings
 
 
-def _bundle_run(run_dir, epoch):
+def _bundle_run(run_dir, epoch, offsets=None):
     """Write this run's durable evidence into the report dir: its artifacts
     (compressed) plus the container logs. Best-effort — a bundle failure must
-    not fail the run."""
+    not fail the run. Returns (written, warnings): written are paths relative
+    to <run_dir>/artifacts/ ([] if the artifact copy failed)."""
+    written, warnings = [], []
     try:
-        _bundle_artifacts(os.path.join(ROOT, "artifacts"),
-                          os.path.join(run_dir, "artifacts"), epoch)
+        written, warnings = _bundle_artifacts(os.path.join(ROOT, "artifacts"),
+                                        os.path.join(run_dir, "artifacts"), epoch, offsets)
     except OSError:
         pass
     try:
@@ -141,6 +241,7 @@ def _bundle_run(run_dir, epoch):
             f.write(out)
     except (ShellError, OSError):
         pass
+    return written, warnings
 
 
 def _new_files(pattern, epoch):
@@ -275,7 +376,9 @@ def offer(argv):
         print("error: another offering is in progress", file=sys.stderr)
         return 2
 
+    warnings = []
     try:
+        wp = lambda args: _wp(["--skip-plugins"] + args)
         if a.reset:
             try:
                 sh(["make", "reset"], cwd=ROOT)
@@ -283,8 +386,21 @@ def offer(argv):
             except ShellError as e:
                 print(f"error: bringing the stack up failed\n{e.stderr}", file=sys.stderr)
                 return 1
+            # a fresh install: what the DB holds now is what every later
+            # isolate() puts it back to
+            stage.record_db_baseline(ROOT, wp)
         elif not a.keep_active:
-            stage.isolate(ROOT, lambda args: _wp(["--skip-plugins"] + args))
+            # isolate() also deletes the DB residue (options, cron, posts, stale
+            # active_plugins) a previous sample left, against the recorded baseline
+            stage.isolate(ROOT, wp)
+            # persistence across offerings: the previous sample may have dropped
+            # files into the docroot volume or patched core.
+            try:
+                stage.restore_docroot(lambda script: sh(
+                    ["docker", "compose", "exec", "-T", "wordpress", "sh", "-c", script], cwd=ROOT))
+            except ShellError as e:
+                warnings.append("docroot restore failed; files a previous sample left in the "
+                                f"docroot may taint this run: {str(e).splitlines()[0]}")
 
         # a file lifted out of a plugin/theme dies on add_action() in a bare
         # webroot; adopt it as a plugin so WordPress is loaded beneath it
@@ -329,7 +445,12 @@ def offer(argv):
         drop_off = os.path.getsize(os.path.join(ROOT, "artifacts/dropped.log")) if os.path.exists(os.path.join(ROOT, "artifacts/dropped.log")) else 0
         err_log = os.path.join(ROOT, "artifacts/php/php-error.log")
         err_off = os.path.getsize(err_log) if os.path.exists(err_log) else 0
+        mitm_log = os.path.join(ROOT, "artifacts/mitm/flows.mitm")
+        mitm_off = os.path.getsize(mitm_log) if os.path.exists(mitm_log) else 0
+        access_log = os.path.join(ROOT, "artifacts/php/nginx-access.log")
+        access_off = os.path.getsize(access_log) if os.path.exists(access_log) else 0
         before = _dbstate()
+        started_before = _wp_started_at()
 
         # trigger
         session = WpSession(URL)
@@ -342,9 +463,9 @@ def offer(argv):
                 return 2
             if det.type in ("plugin", "theme", "directory-plugin", "directory-theme") and \
                not any(x.kind == "login" for x in actions):
-                actions = [recipe.Action("login", "admin", "sandbox")] + actions
+                actions = [recipe.Action("login", *_admin_credentials())] + actions
         else:
-            actions = trigger.default_actions(det)
+            actions = trigger.default_actions(det, recipe.Action("login", *_admin_credentials()))
         trigger.execute(session, actions)
         time.sleep(3)
         if a.stub_missing:
@@ -359,14 +480,28 @@ def offer(argv):
         fatals = stubs.fatal_lines(stubs.new_lines(err_log, err_off))
 
         # collect
-        after = _dbstate()
+        after = _dbstate_or_warn(before, warnings)
+        started_after = _wp_started_at()
+        wp_restarted = bool(started_before and started_after and started_before != started_after)
+        if wp_restarted:
+            warnings.append("wordpress container restarted during the run (the sample likely "
+                            "killed php-fpm or supervisord; the restart policy brought it back)")
         traces = _new_files(os.path.join(ROOT, "artifacts/xdebug/*.xt"), epoch)
         sp_dumps = _new_files(os.path.join(ROOT, "artifacts/sp-dumps/*"), epoch)
         pcaps = _new_files(os.path.join(ROOT, "artifacts/pcap/*"), epoch)
-        _bundle_run(run_dir, epoch)
+        offsets = {"dns/dns.log": dns_off, "dropped.log": drop_off,
+                   "php/php-error.log": err_off, "php/nginx-access.log": access_off,
+                   "mitm/flows.mitm": mitm_off}
+        bundled, bundle_warnings = _bundle_run(run_dir, epoch, offsets)
+        warnings.extend(bundle_warnings)
+        bundle = sorted(os.path.join("artifacts", rel) for rel in bundled)
 
         # assemble
-        warnings = [] if traces else ["no new trace produced; sample may need a recipe"]
+        if not traces:
+            warnings.append("no new trace produced; sample may need a recipe")
+        if session.logged_in is False:
+            warnings.append("admin login failed; the sample ran unauthenticated "
+                            "(check WP_ADMIN_USER/WP_ADMIN_PASSWORD in .env)")
         db_diff = dbdiff.diff(before, after)
         net = {
             "dns": network.dns_from_log(os.path.join(ROOT, "artifacts/dns/dns.log"), dns_off)
@@ -381,12 +516,14 @@ def offer(argv):
                        "type": det.type}
         run_meta = {"epoch": epoch, "utc": iso, "slug": det.slug,
                     "trigger_actions": session.actions, "reset": a.reset,
-                    "stubs": made_stubs, "fatal": fatal, "fatals": fatals, "adopted": adopted}
+                    "stubs": made_stubs, "fatal": fatal, "fatals": fatals, "adopted": adopted,
+                    "login_ok": session.logged_in, "wp_restarted": wp_restarted}
         creds = _credentials_from_trace(traces)
         s = summary.build_summary(
             sample_meta, run_meta, db_diff, traceparse.callchain(traces),
             traceparse.dangerous_calls_from_trace(traces), traceparse.files_written(traces),
-            net, {"traces": traces, "sp_dumps": sp_dumps, "pcaps": pcaps}, warnings)
+            net, {"traces": traces, "sp_dumps": sp_dumps, "pcaps": pcaps, "bundle": bundle},
+            warnings)
         iocs = summary.build_iocs(
             {k: sample_meta[k] for k in ("filename", "path", "sha256", "md5", "size_bytes")},
             iso, f"wp-sample/{det.type}", db_diff, traceparse.files_written(traces), net, creds)

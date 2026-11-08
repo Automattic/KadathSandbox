@@ -44,8 +44,14 @@ def test_pending_rules(tmp_path):
     assert [r["case_id"] for r in m.pending("offer")] == ["B"]
     assert m.pending("scry") == []
     m.update("B", offer_status="done", offer_verdict="green")
+    # the status column routes, not the verdict: an unexercised green the
+    # orchestrator left scry-pending must reach the Scry; a settled one is skipped
+    assert [r["case_id"] for r in m.pending("scry")] == ["B"]
+    m.update("B", scry_status="skipped")
     assert m.pending("scry") == []
-    m.update("B", offer_verdict="amber")
+    m.update("B", scry_status="pending", offer_status="error")
+    assert m.pending("scry") == []                                 # no offer result to re-examine
+    m.update("B", offer_status="done", offer_verdict="amber")
     assert [r["case_id"] for r in m.pending("scry")] == ["B"]
     m.update("B", offer_verdict="red")
     assert [r["case_id"] for r in m.pending("scry")] == ["B"]
