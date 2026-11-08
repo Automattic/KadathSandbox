@@ -214,3 +214,20 @@ def test_stub_rounds_treats_parse_error_as_fatal(tmp_path):
     log.write_text("[08-Sep-2026 11:10:36 UTC] PHP Parse error:  syntax error in /samples/webroot/s.php on line 2\n")
     made, fatal = stubs.stub_rounds(str(root), str(log), 0, lambda: None)
     assert made == [] and fatal is True
+
+
+def test_nul_in_names_is_skipped_not_raised(tmp_path):
+    assert stubs.host_path("/samples/webroot/a\0b.php", str(tmp_path)) is None
+    assert stubs.write_stub(str(tmp_path / "a\0b.php")) is False
+    assert stubs.static_includes("<?php require 'a\0b.php'; include 'ok.php';") == ["ok.php"]
+    assert stubs.missing_includes(["PHP Fatal error: Failed opening required '/samples/webroot/x\0.php' in /x:1"]) \
+        == ["/samples/webroot/x\0.php"]
+    assert stubs.host_path("/samples/webroot/x\0.php", str(tmp_path)) is None
+
+
+def test_write_stub_does_not_follow_a_dangling_link(tmp_path):
+    target = tmp_path / "outside.php"
+    link = tmp_path / "stub.php"
+    link.symlink_to(target)
+    assert stubs.write_stub(str(link)) is False
+    assert not target.exists()

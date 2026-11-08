@@ -39,3 +39,12 @@ def test_default_actions_plugin_uses_given_login():
     # themes and webshells never log in: the login is ignored
     t = detect.Detected("theme", "t", "samples/themes/t")
     assert trigger.default_actions(t, mine) == [recipe.Action("get", "/")]
+
+
+def test_default_actions_quotes_basename():
+    d = detect.Detected("webshell", "x", "samples/webroot/a b?c.php")
+    acts = trigger.default_actions(d)
+    assert acts[0] == recipe.Action("get", "/a%20b%3Fc.php")
+    # and what it builds is a path the session accepts
+    from kadath.wpsession import _check_path
+    _check_path(acts[0].a)

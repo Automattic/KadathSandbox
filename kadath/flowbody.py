@@ -15,6 +15,19 @@ def _wp_core(host):
     return h == "wordpress.org" or h.endswith(".wordpress.org")
 
 
+def _dst(flow):
+    sc = getattr(flow, "server_conn", None)
+    for attr in ("peername", "address"):
+        v = getattr(sc, attr, None)
+        if isinstance(v, (tuple, list)) and v:
+            return str(v[0])
+    return None
+
+
+def _sni(flow):
+    return getattr(getattr(flow, "client_conn", None), "sni", None) or None
+
+
 def _text(body):
     if not body:
         return ""
@@ -27,10 +40,14 @@ class FlowBody:
 
     def _emit(self, flow, error):
         req = flow.request
-        if req is None or getattr(req, "timestamp_start", 0) < self.epoch or _wp_core(req.pretty_host):
+        if req is None or getattr(req, "timestamp_start", 0) < self.epoch:
             return
+        sni = _sni(flow)
+        # every flow is emitted, core-looking ones included: the Host header is the
+        # sample's to choose, so whether a flow is really WordPress core is decided
+        # by the consumer against the verified flow list (dst vs the DNS log)
         print(json.dumps({
-            "host": req.pretty_host, "method": req.method, "path": req.path,
+            "host": req.pretty_host, "dst": _dst(flow), "sni": sni, "method": req.method, "path": req.path,
             "status": flow.response.status_code if flow.response else None,
             "error": error,
             "request_body": _text(getattr(req, "raw_content", None)),

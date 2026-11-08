@@ -15,6 +15,9 @@ class Detected:
     dest: str
 
 
+_RESERVED = ("index.php", "wp-config.php")
+
+
 def _slug(name):
     base = re.sub(r"\.(php|zip)$", "", os.path.basename(name.rstrip("/")))
     s = re.sub(r"[^A-Za-z0-9]+", "-", base).strip("-").lower()
@@ -47,5 +50,11 @@ def detect(path):
     if path.endswith(".php"):
         if _has_marker(path, "Plugin Name:"):
             return Detected("plugin", slug, f"samples/plugins/{slug}")
-        return Detected("webshell", slug, f"samples/webroot/{os.path.basename(path)}")
+        base = os.path.basename(path)
+        # the wordpress entrypoint never links these into the docroot
+        if base in _RESERVED or base.startswith("."):
+            raise UnsupportedSample(
+                f"loose PHP sample named {base!r} would be refused by the sandbox entrypoint "
+                f"(reserved WordPress entry point or dotfile); rename the file and offer it again")
+        return Detected("webshell", slug, f"samples/webroot/{base}")
     raise UnsupportedSample(f"unsupported sample {path}: not a .php, .zip, or plugin/theme directory")

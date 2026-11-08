@@ -11,8 +11,14 @@ def build_summary(sample, run, db_diff, callchain, dangerous, files_written,
     }
 
 
+def _is_core(flow):
+    """The verified flag (network.verify_wp_core): a spoofed Host header is
+    never core, whatever wp_core says."""
+    return bool(flow.get("wp_core")) and not flow.get("host_spoofed")
+
+
 def _network_observed(network):
-    if any(not f.get("wp_core") for f in network.get("flows", [])):
+    if any(not _is_core(f) for f in network.get("flows", [])):
         return True
     if network.get("dropped"):
         return True
@@ -45,6 +51,8 @@ def build_iocs(sample, run_utc, classification, db_diff, files_written,
     for c in db_diff["cron_added"]:
         add("wp_cron_hook", c["hook"], evidence="db_diff")
     for f in files_written:
+        if f.get("op") == "truncated":      # traceparse's "...and N more" marker
+            continue
         add("file_path", f["path"], notes=f["op"], evidence=f["caller"])
     domains, ips, urls = [], [], []
     for n in network.get("dns", []):
@@ -53,7 +61,16 @@ def build_iocs(sample, run_utc, classification, db_diff, files_written,
             domains.append(n)
             add("domain", n, evidence="dns.log")
     for f in network.get("flows", []):
-        if not f.get("wp_core"):
+        if _is_core(f):
+            continue
+        if f.get("host_spoofed") and f.get("dst"):
+            # the Host header names a core host but the connection went elsewhere:
+            # the address is the indicator, the claimed name is not
+            if f["dst"] not in ips:
+                ips.append(f["dst"])
+                add("ip", f["dst"], notes=f"Host header spoofed as {f['host']}",
+                    evidence="flows.mitm")
+        else:
             u = f["host"] + f["path"]
             urls.append(u)
             notes = f["method"]
@@ -62,7 +79,12 @@ def build_iocs(sample, run_utc, classification, db_diff, files_written,
             add("url", u, notes=notes, evidence="flows.mitm")
     for d in network.get("dropped", []):
         ips.append(d["dst"])
-        add("ip", d["dst"], notes=f"blocked egress to port {d['port']}", evidence="dropped.log")
+        proto = d.get("proto", "tcp")
+        notes = (f"blocked egress to port {d['port']}" if proto == "tcp" else
+                 f"blocked egress ({proto}" + (f" port {d['port']}" if d.get("port") else "") + ")")
+        if d.get("iface") == "mgmt":
+            notes += " on the management interface"
+        add("ip", d["dst"], notes=notes, evidence="dropped.log")
 
     return {
         "sample": sample,

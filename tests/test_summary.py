@@ -66,3 +66,47 @@ def test_iocs_ip_is_bare_address_port_in_notes():
     assert ip["value"] == "1.1.1.1"
     assert ip["notes"] == "blocked egress to port 6667"
     assert i["network"]["ips"] == ["1.1.1.1"]
+
+
+def _spoofed_net():
+    return {"dns": [], "dropped": [],
+            "flows": [{"host": "api.wordpress.org", "method": "POST", "path": "/x", "status": 200,
+                       "error": None, "wp_core": False, "host_spoofed": True, "dst": "6.6.6.6"}]}
+
+
+def test_spoofed_core_flow_is_an_ip_ioc_and_observed():
+    i = summary.build_iocs(
+        sample={"filename": "x.php", "sha256": "a"*64, "md5": "b"*32, "size_bytes": 10},
+        run_utc="t", classification="c", db_diff=_db(), files_written=[], network=_spoofed_net(), credentials=[])
+    assert i["network"]["observed"] is True and i["network"]["ips"] == ["6.6.6.6"]
+    assert i["network"]["urls"] == []
+    ips = [x for x in i["indicators"] if x["type"] == "ip"]
+    assert ips == [{"type": "ip", "value": "6.6.6.6", "notes": "Host header spoofed as api.wordpress.org",
+                    "evidence": "flows.mitm"}]
+    assert not any("wordpress.org" in x["value"] for x in i["indicators"])
+
+
+def test_wp_core_flag_alone_does_not_hide_a_spoofed_flow():
+    n = _spoofed_net()
+    n["flows"][0]["wp_core"] = True            # inconsistent input: the spoof flag still wins
+    assert summary._network_observed(n) is True
+
+
+def test_truncated_marker_is_not_an_ioc():
+    i = summary.build_iocs(
+        sample={"filename": "x.php", "sha256": "a"*64, "md5": "b"*32, "size_bytes": 10},
+        run_utc="t", classification="c", db_diff=_db(),
+        files_written=[{"op": "truncated", "path": "...and 5 more", "caller": ""}],
+        network=_net(False), credentials=[])
+    assert not any(x["type"] == "file_path" for x in i["indicators"])
+
+
+def test_dropped_notes_name_the_protocol():
+    i = summary.build_iocs(
+        sample={"filename": "x.php", "sha256": "a"*64, "md5": "b"*32, "size_bytes": 10},
+        run_utc="t", classification="c", db_diff=_db(), files_written=[],
+        network={"dns": [], "flows": [], "dropped": [
+            {"dst": "1.1.1.1", "port": 6667, "proto": "tcp"},
+            {"dst": "9.9.9.9", "port": 0, "proto": "icmp", "iface": "mgmt"}]}, credentials=[])
+    notes = [x["notes"] for x in i["indicators"] if x["type"] == "ip"]
+    assert notes == ["blocked egress to port 6667", "blocked egress (icmp) on the management interface"]
