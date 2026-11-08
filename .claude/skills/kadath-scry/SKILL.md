@@ -40,6 +40,8 @@ The **Xdebug trace is ground truth** — it records every function call with arg
 | Blocked egress | `artifacts/dropped.log` | raw-TCP C2, scanning, non-web ports | the sample tried something that was not HTTP/DNS |
 | DB ground truth | `wp --skip-plugins user list` / `option get` / `wp cron event list` | users, options, cron the sample created | persistence check |
 
+**Unauthenticated runs:** check `run.login_ok` in `summary.json`. `false` means the engine's admin login failed (the summary also carries a warning), so anything behind `wp-admin` never ran: say so in the report rather than calling the sample quiet. Flows with `status: null` and an `error` are attempts that never got a response (dead C2, pinned certificate, timeout); report them as attempted outbound contact, not as absent.
+
 **The Snuffleupagus trap:** an empty `php-error.log` does not mean benign. A backdoor built from legitimate WordPress APIs (`wp_create_user`, `set_role`, `update_user_meta`, `wp_schedule_event`) never trips Snuffleupagus. Judge behaviour from the Xdebug trace, and call out API-only backdoors as a detection-evasion property.
 
 **Database, unfiltered:** always query with the `wp` wrapper (`docker compose exec -T wordpress wp ...`), which runs `--skip-plugins` so the sample's own hiding hooks do not filter what you see. A mismatch between `wp user list` and what wp-admin renders is itself an IOC.
@@ -52,7 +54,7 @@ Write all three into `$RUN`:
 2. `iocs.json` — machine-readable indicators. Conform to [references/iocs-schema.json](references/iocs-schema.json) exactly, so the threat-library tooling can ingest it.
 3. `draft.yar` — a YARA rule. Mark it a draft from a single offering in its `meta`; base strings on distinctive constants (hooks, meta/option keys, hex-obfuscated literals, unique user-facing text), not on generic WordPress API names.
 
-Then confirm the run's evidence is preserved: the `bin/kadath offer` engine bundles it (traces gzipped) into `$RUN/artifacts/`; a hand-staged run needs `make snapshot`. To read a gzipped trace from a bundle, `zcat $RUN/artifacts/xdebug/*.xt.gz | ...`. `artifacts/` itself holds only the current run — the engine clears prior traces each run.
+Network and log files in `$RUN/artifacts/` are this run's slice (appended bytes since the trigger, packets since the epoch), not the whole history. Then confirm the run's evidence is preserved: the `bin/kadath offer` engine bundles it (traces gzipped) into `$RUN/artifacts/`; a hand-staged run needs `make snapshot`. To read a gzipped trace from a bundle, `zcat $RUN/artifacts/xdebug/*.xt.gz | ...`. `artifacts/` itself holds only the current run — the engine clears prior traces each run. `summary.json` lists the bundled files under `artifacts.bundle`, relative to `$RUN`.
 
 ## Batch, without an agent in the loop
 

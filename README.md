@@ -1,8 +1,8 @@
 # KadathSandbox
 
 An isolated WordPress sandbox for offering untrusted PHP: plugins, themes, webshells, droppers.
-Nothing the sample does can leave except through a decrypting proxy, and it cannot switch the
-recording off: the packet capture, the proxy and the DNS log run in containers it has no access
+Nothing the sample does can leave except through a decrypting proxy and DNS lookups, which are
+logged, and it cannot switch the recording off: the packet capture, the proxy and the DNS log run in containers it has no access
 to, and the in-process off switches (`xdebug_stop_trace`, `ini_set('error_log', ...)`) are
 disabled. It *can* delete artifact files that have already been written — the observation layer
 needs those directories writable by the same uid the sample runs as — so run `make snapshot`
@@ -67,7 +67,7 @@ plugin) so an agent can run the whole workflow:
 
 Open this directory in Claude Code and the skills are discovered automatically (a fresh session
 picks up newly added skills). Elsewhere, install with `/plugin marketplace add Automattic/KadathSandbox`
-then `/plugin install kadath-sandbox@kadath`. A offering writes its report to `reports/<slug>-<ts>/`.
+then `/plugin install kadath-sandbox@kadath`. An offering writes its report to `reports/<slug>-<ts>/`.
 
 ## One-command offering
 
@@ -100,6 +100,36 @@ network summary, artifact list), and a pre-filled `iocs.json`. The narrative
 report and YARA rule are still the `kadath-scry` skill's job, working from
 that structured input.
 
+The default triggers for a plugin log in as the WordPress admin the stack was installed with,
+read from `WP_ADMIN_USER` / `WP_ADMIN_PASSWORD` (environment first, then `.env`), not from a
+hard-coded login. Success is judged by the `wordpress_logged_in_*` cookie, since the HTTP code
+is the same either way; `summary.json` records it as `run.login_ok` (`true`, `false`, or `null`
+when no login was attempted), a failed login adds a warning, and the trigger action reads
+`LOGIN admin -> 200 ok` or `FAILED`. A run that never got past the login proves little about the sample.
+
+Between offerings the engine puts the WordPress docroot back to the image's pristine tree: files a
+previous sample dropped anywhere under `/var/www/html` (an uploads shell, an mu-plugin, a
+`.user.ini`, a patched core file) are removed, and `wp-config.php` is deleted so the entrypoint
+regenerates it with fresh salts (appending to it is textbook persistence). The database is put
+back too: the engine records a baseline of what the install legitimately holds (option names,
+cron hooks, post IDs, in `.kadath/db-baseline.json`, taken after `--reset` or, failing that, from
+the live database on the first offering, which then skips the reset and says so), and before each
+offering deletes the options, cron events and posts (with their postmeta) that are not in it, drops
+users other than the install admin, and rewrites `active_plugins` to the plugins whose files still
+exist. Transients, `cron` and `recently_activated` are left to WordPress. The baseline is tied to
+the install, so a `make reset` run by hand makes it stale and it is re-recorded. Not undone: a
+stock option whose *value* a sample changed (`users_can_register`, `admin_email`; the baseline
+holds names only), custom tables, and usermeta on the admin, so `--reset` remains the full clean
+slate. If a sample kills php-fpm or supervisord (it shares their uid), the engine records a
+warning and writes the summary with an empty DB diff instead of crashing. The container
+restarts itself (`restart: unless-stopped`; the network namespace belongs to `wpnet`, so the
+guard survives, and the entrypoint refuses to start without it), and the engine compares the
+container's start time before and after the trigger. A changed start time adds the warning
+"wordpress container restarted during the run (the sample likely killed php-fpm or supervisord;
+the restart policy brought it back)" and sets `run.wp_restarted: true` in `summary.json`, so a
+kill is recorded even when the restart was fast. Zip samples are refused
+above 256 MiB uncompressed or 20000 entries.
+
 For a sample the defaults can't drive (a webshell needing specific parameters,
 or an admin action), drop a `<sample>.kadath` recipe next to it:
 
@@ -128,6 +158,10 @@ CSRF token); keep the port local — do not expose it to a network. Downloaded
 artifacts are hostile content served as inert attachments; do not open a
 downloaded trace or flow in a browser tab.
 
+Uploads are kept under `.kadath/web/<token>/`, and the server deletes upload directories older
+than 7 days when it starts. A report's `sample.path` may therefore point at an upload that has
+been pruned; the hashes in the report remain the record.
+
 ## The Pilgrimage — batch triage with a local model
 
 `bin/kadath pilgrimage` walks a threat-library `for-later-review/` directory and
@@ -152,10 +186,14 @@ Three passes, each resumable from `kadath-triage.csv`:
    The Offering runs with `--stub-missing`, and the final verdict is the highest
    of the Cavern's, the deterministic, and the model's. A run whose `coverage`
    is not `full` — `stubbed` (ran against empty stand-ins), `unauthenticated`
-   (never got its password), `errored` (fataled) — cannot settle a green:
+   (never got its password, or the engine's admin login failed), `errored` (fataled) — cannot settle a green:
    runtime silence is not evidence. A case is settled when the Cavern and the
    model agree and the deterministic layer does not exceed them; everything
    else — amber, a disagreement, an unexercised green — goes to the Scry.
+   The case's `scry_status`, not its offer verdict, decides this, so an unexercised green
+   reaches the Scry. A verdict that came only from the Runes (the Offering could not run the
+   sample, so there is no run bundle) is marked skipped with an explanatory error: there is
+   nothing of this sample's to scry, and the live `artifacts/` belong to another run.
 4. **Scry** — ambers, low-confidence reds, and every disagreement get an agentic
    re-examination with read-only tools; every claim must quote a tool result
    verbatim or it is dropped, and it never lowers a deterministic verdict.
@@ -210,6 +248,10 @@ behaviour traced.
 - `grep -n "eval\|base64_decode\|system" artifacts/xdebug/<latest>.xt` finds deobfuscation stages; eval strings and other values are recorded up to 64 KB each.
 - `artifacts/php/php-error.log` lists every hooked call with its arguments.
 - Open mitmweb, or replay later with `docker compose exec gateway mitmproxy -nr /artifacts/mitm/flows.mitm`.
+- A request that never got a response (dead C2, a pinned certificate, a timeout) is still recorded in
+  `summary.json` with `status: null` and an `error` string, and the deterministic verdict counts it red
+  like a completed flow: it is an outbound attempt. A DNS lookup of a non-WordPress-core name with no flow
+  behind it is amber ("DNS lookup of <name>").
 - `artifacts/dropped.log` shows what the sample put on the wire that was not HTTP/DNS. Note what it
   cannot show: packet capture taps the outbound path after the firewall, so connections `netguard`
   drops inside the namespace — anything aimed at 172.30.0.1 or another internal neighbour, and
@@ -221,7 +263,12 @@ behaviour traced.
 - **The run's evidence is preserved automatically.** `make offer` bundles each run into
   `reports/<slug>-<ts>/artifacts/` with the traces gzipped (~16x), and clears the prior run's
   traces on the next offer, so `artifacts/` stays at roughly one run and each bundle is tens of
-  MB. The sample runs as uid 33 and can `unlink()` its own live traces, but the bundle is the
+  MB. The append-only files (`dns.log`, `dropped.log`, `php-error.log`, `nginx-access.log`,
+  `flows.mitm`) are bundled from the byte offset recorded before the trigger, and the live pcap is
+  cut to this run's packets by timestamp, so a bundle holds this run's slice, not the history. `summary.json` lists the files of the
+  bundle under `artifacts.bundle`, relative to the report directory (the gzipped traces and logs,
+  the pcap slice), and the web UI's artifact links serve from the bundle, so they outlive the next
+  offering; the `traces`, `sp_dumps` and `pcaps` lists remain the live paths at collection time. The sample runs as uid 33 and can `unlink()` its own live traces, but the bundle is the
   durable copy. For a hand-staged run, `make snapshot` (also gzipped).
 
 ## OS-level monitoring (strace, eBPF)
@@ -279,7 +326,8 @@ Three artifacts grow without bound during a long offering and are worth watching
 - `artifacts/xdebug/` — one trace file per HTTP request; a WordPress page view is ~100-230 MB
   (`collect_assignments=1`, values up to 64 KB each). Live traces are not capped, but the engine
   clears the prior run's on the next offer and stores each run's gzipped (~16x) in the report
-  bundle, so they do not accumulate.
+  bundle, so they do not accumulate. The report bundle copies only this run's part of the
+  three growing files above, so it does not grow with their history.
 
 ```bash
 make snapshot     # gzip artifacts/ (traces compressed) + container logs into snapshots/<timestamp>/
@@ -297,18 +345,19 @@ capture until those containers restart. Use `make reset`, or restart `gateway`/`
 
 - `wordpress` runs as uid 33 with every capability dropped, a read-only root, and no ability to change routes or firewall rules.
 - Its network namespace is owned by `wpnet`, which sits on an `internal` Docker network (no route out) plus a management bridge that exists only to publish `127.0.0.1:8088`. `netguard` sets the default route to the gateway and installs an iptables policy inside that namespace whose outbound rules are destination-specific: the gateway (172.30.0.2) and the database (172.30.0.3) are allowed, the rest of 172.30.0.0/24 is dropped — **including 172.30.0.1, the Docker host's own address on that bridge** — and everything beyond the subnet goes out the default route into the gateway.
-- The gateway redirects TCP 80/443 into mitmproxy and port 53 into dnsmasq. Its `INPUT` and `FORWARD` policies are DROP, so anything else the sample sends is captured and discarded.
+- The gateway redirects TCP 80/443 into mitmproxy and port 53 into dnsmasq. Its `INPUT` and `FORWARD` policies are DROP, so anything else the sample sends is captured and discarded. The proxy port (8080) accepts only connections that were REDIRECTed (`--ctstate DNAT`), and the gateway rejects its own loopback connections to it. A sample that connects straight to `172.30.0.2:8080` is not NATed, so mitmproxy would read its own address as the original destination and connect to itself in a loop (one raw connect produced ~34k self-connections), a one-line denial of service against the observation layer.
 - The gateway also refuses to *fetch* private destinations. The sample never connects anywhere itself: it names a host and mitmproxy does the connecting, so without this the proxy would happily retrieve `http://192.168.1.1/`, `http://169.254.169.254/`, or `http://host.docker.internal/` on its behalf. The gateway `REJECT`s egress to `10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 169.254.0.0/16 100.64.0.0/10 0.0.0.0/8 127.0.0.0/8`; override with `GATEWAY_BLOCKED_DESTS` in `.env`. Public internet egress is unaffected.
 - Packet capture runs in `netcap`, inside the sandbox's network namespace — the only place that sees sandbox→database and sandbox→host traffic. It shares only the network namespace with `wordpress`, so the sample can neither see nor kill the tcpdumps.
-- The observation layer has no in-process off switch. `xdebug_stop_trace`, `xdebug_start_trace`, `xdebug_set_filter`, `xdebug_get_tracefile_name` and `xdebug_get_function_stack` are in `disable_functions`, and Snuffleupagus pins `error_log` read-only, so `ini_set('error_log', '/dev/null')` fails. Nothing a sample needs for its own behaviour is disabled.
-- TLS is decrypted because the sample's PHP trusts only the mitmproxy CA. Only the certificate is mounted into the container, not the whole mitmproxy config volume: the CA private key lives there too.
+- The observation layer has no in-process off switch. `xdebug_stop_trace`, `xdebug_start_trace`, `xdebug_set_filter`, `xdebug_get_tracefile_name` and `xdebug_get_function_stack` are in `disable_functions`, and Snuffleupagus pins `error_log` read-only, so `ini_set('error_log', '/dev/null')` fails. Nothing a sample needs for its own behaviour is disabled. The sample shares uid 33 with php-fpm, so it could also reconfigure the observation through `ini_set()` or a dropped `.user.ini` (`xdebug.var_display_max_data=0` would blind argument capture). The pool therefore pins the observation keys (`error_log`, `log_errors`, the `xdebug.*` trace and display settings, `auto_prepend_file`, `auto_append_file`) with `php_admin_value` / `php_admin_flag`, which neither can override, and `user_ini.filename=` is empty so `.user.ini` files in the docroot are ignored entirely.
+- TLS is decrypted because the sample's PHP trusts only the mitmproxy CA. WordPress's own HTTP API (`wp_remote_get` and friends, which most WordPress malware uses for C2) ignores `openssl.cafile` and verifies against `wp-includes/certificates/ca-bundle.crt`, so the entrypoint appends the mitmproxy CA to that bundle (the engine's docroot restore re-applies it). Only the certificate is mounted into the container, not the whole mitmproxy config volume: the CA private key lives there too.
 - The database's `root` account is confined to the db container's own loopback (`MARIADB_ROOT_HOST=localhost`), so the published default root password is not usable from the sample's container.
 
 ## Caveats
 
 - This is container isolation, not a VM. Run it on a machine you can afford to rebuild, never one holding production credentials.
+- DNS is a real egress channel. Every lookup the sample makes is forwarded by dnsmasq to the host's resolver and answered truthfully, so a sample can exfiltrate data in query names (DNS tunnelling). It is logged in `artifacts/dns/dns.log` but not blocked.
 - HTTP(S) C2 traffic is real: the attacker sees your egress IP. Use a VPN or burner network if attribution matters.
-- Certificate-pinned samples will fail the TLS handshake; mitmproxy logs the SNI. To pass a host through undecrypted, set `MITM_EXTRA_ARGS=--ignore-hosts 'host\.example:443'` in `.env`.
+- Certificate-pinned samples will fail the TLS handshake; mitmproxy logs the SNI, and the engine records the failed attempt as a flow with an `error`. To pass a host through undecrypted, set `MITM_EXTRA_ARGS=--ignore-hosts 'host\.example:443'` in `.env`.
 - No IPv6 rules exist on the gateway: IPv6 is disabled in the WordPress namespace and the Compose networks have no IPv6 subnets. If you enable IPv6 on these networks, the containment must be revisited.
 - Treat `artifacts/` as hostile: decrypted flows and dumps can contain second-stage payloads. Read them with `cat -v` / `grep -a ... | cat -v` rather than letting raw sample bytes hit your terminal.
 - **Use a throwaway browser profile** for http://127.0.0.1:8088 and http://127.0.0.1:8081. You are pointing a browser at attacker-controlled HTML with a real session; a profile holding your normal cookies, extensions and saved passwords is exposed to whatever the sample serves, and mitmweb renders sample-controlled request and response bodies too.

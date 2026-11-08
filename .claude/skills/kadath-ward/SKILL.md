@@ -13,7 +13,7 @@ Run the stack, keep it trustworthy, and never trade containment for convenience.
 | Goal | Command | Notes |
 |---|---|---|
 | Build and start | `make up` | builds, starts db/gateway/wpnet/netcap/wordpress, waits for health |
-| Prove it works | `make selftest` | 15 assertions across all layers; **the gate before any real sample** |
+| Prove it works | `make selftest` | 19 assertions across all layers (including pinned ini keys, an ignored `.user.ini`, a dropped direct connection to the proxy port, and `wp_remote_get` over https being decrypted); **the gate before any real sample** |
 | Save a run | `make snapshot` | copies `artifacts/` (traces/logs gzipped) + container logs to `snapshots/<ts>/` |
 | Wipe everything | `make reset` | `down -v` + clears `artifacts/`; rebuilds WordPress, DB, and the mitmproxy CA from scratch (minutes) |
 | Tail logs | `make logs` | gateway + wordpress |
@@ -31,8 +31,9 @@ WordPress is `http://127.0.0.1:8088` (admin/sandbox), mitmweb `http://127.0.0.1:
 Three independent layers keep the sample off your machine and the internet-at-large. Read `docs/superpowers/specs/2026-09-03-wp-malware-sandbox-design.md` for the full model; the operating rule is short:
 
 - `wordpress` runs as uid 33, read-only rootfs, `cap_drop: [ALL]`, `no-new-privileges`.
+- The observation ini keys (`error_log`, the `xdebug.*` trace settings, `auto_prepend_file`/`auto_append_file`) are pinned with `php_admin_value` in `zz-sandbox.conf`, and `user_ini.filename=` is empty, so a sample cannot change them with `ini_set()` or a `.user.ini`.
 - `netguard` pins the sandbox's only route out through the gateway and drops everything else, including the Docker host at 172.30.0.1.
-- `gateway` redirects 80/443 into mitmproxy and 53 into dnsmasq, REJECTs a private-range blocklist, and drops the rest.
+- `gateway` redirects 80/443 into mitmproxy and 53 into dnsmasq, REJECTs a private-range blocklist, and drops the rest. Its proxy port 8080 accepts only REDIRECTed connections (`--ctstate DNAT`) and rejects its own loopback connections to it: a direct, un-NATed connect makes mitmproxy connect to itself in a loop, a denial of service against observation.
 
 **Never, to make a sample run or a test pass:** add `cap_add`, publish a port on `0.0.0.0`, edit `netguard`/`gateway` iptables rules, loosen a container's `read_only`/`cap_drop`/`user`, or comment out a self-test assertion. Those are the boundary. If a self-test assertion fails, it is reporting a real regression in the boundary — fix the cause, do not silence the check.
 
@@ -44,13 +45,16 @@ The one legitimate way to let a sample reach a private lab target: the documente
 |---|---|---|
 | `make up` fails, port 8088 in use | another process owns `127.0.0.1:8088` | `lsof -nP -iTCP:8088 -sTCP:LISTEN`; stop it, or change the published port in `docker-compose.yml` (host side only) |
 | wordpress unhealthy, log says CA not readable | gateway not up, or CA volume empty | ensure gateway healthy first; `make reset` regenerates the CA if the volume is stale |
-| wordpress exits: "default route not via 172.30.0.2" | `netguard` did not run in this namespace | `docker compose up -d --force-recreate wpnet netguard wordpress` so netguard re-runs, or just `make up` |
+| wordpress never healthy and `make up` times out; `docker compose logs wordpress` repeats FATAL "default route not via 172.30.0.2" (the container restart-loops rather than exiting, by design) | `netguard` did not run in this namespace | `docker compose up -d --force-recreate wpnet netguard wordpress` so netguard re-runs, or just `make up` |
 | self-test: TLS/`https` assertion fails | PHP does not trust the mitmproxy CA | check `openssl.cafile` points at `/gateway-ca/...`; `make reset` if the CA rotated |
 | self-test: `irc`/drop assertion "connected" not "blocked" | netguard or gateway policy not applied | `docker compose logs netguard`; confirm it exited 0; re-`make up` |
+| self-test: `wp_remote_get` assertion fails | WordPress's own TLS bundle lacks the mitmproxy CA (it ignores `openssl.cafile`) | the entrypoint appends the CA to `wp-includes/certificates/ca-bundle.crt`; `docker compose up -d --force-recreate wordpress`, or `make reset` if the CA rotated |
+| image build fails fetching Xdebug | Xdebug is built from the GitHub tag archive (`github.com/xdebug/xdebug/archive/refs/tags/<v>.tar.gz`) and checked against the `XDEBUG_SHA256` build arg; pecl.php.net and xdebug.org were unreachable from the Docker build network on one host | if you bump `XDEBUG_VERSION`, update `XDEBUG_SHA256` to match; a mismatch is a refusal, not something to bypass |
 | artifacts empty / permission denied on Linux | bind mounts owned by the wrong uid | `chown -R 33:33 artifacts/` on a native Linux host (not needed on OrbStack) |
 | `dropped.log` missing a blocked connection | capture taps after the firewall; netns-dropped packets never reach the device | expected — see it in the Xdebug trace and `docker compose run --rm --no-deps --entrypoint sh netguard -c 'iptables -nvL OUTPUT'` counters |
+| a previous sample's options/posts reappear, or a green looks dirty | DB baseline stale or recorded from an already-dirty DB | `bin/kadath offer --reset <sample>` re-records `.kadath/db-baseline.json` from a fresh install |
 | traces are enormous | a page view records ~100 MB | normal; use `grep`/`awk`, never load a whole trace; `make reset` between runs to reclaim disk |
 
 ## Between samples
 
-The `bin/kadath offer` engine bundles each run's evidence (traces gzipped) into `reports/<slug>-<ts>/artifacts/` and clears the prior run's traces on the next offer, so `artifacts/` stays at roughly one run and per-run bundles are ~tens of MB, not tens of GB. For a hand-staged run, `make snapshot` (now compressed). `make reset` still wipes everything for a guaranteed clean slate. **Never blanket-delete files under `artifacts/` (e.g. `find artifacts -delete`) while the stack is up** — `dns.log`, `dropped.log`, `flows.mitm` and the pcap are held open by the gateway and netcap containers, and unlinking them stops network capture until those containers restart. Clear via `make reset`, or restart `gateway`/`netcap` after any such deletion.
+The `bin/kadath offer` engine bundles each run's evidence (traces gzipped) into `reports/<slug>-<ts>/artifacts/` and clears the prior run's traces on the next offer, so `artifacts/` stays at roughly one run and per-run bundles are ~tens of MB, not tens of GB. The bundle holds only this run's slice of the append-only logs and live pcap. The engine also restores the WordPress docroot to the image's pristine tree between offerings, and puts the database residue back from a baseline in `.kadath/db-baseline.json` (options, cron events, posts and postmeta, extra users and dead `active_plugins` entries are removed if they are not in it). Not undone: changed values of stock options, custom tables and admin usermeta, so use `bin/kadath offer --reset` (or `make reset`) for a true clean slate. A hand-run `make reset` makes the baseline stale; the engine notices and re-records it. For a hand-staged run, `make snapshot` (now compressed). `make reset` still wipes everything for a guaranteed clean slate. **Never blanket-delete files under `artifacts/` (e.g. `find artifacts -delete`) while the stack is up** — `dns.log`, `dropped.log`, `flows.mitm` and the pcap are held open by the gateway and netcap containers, and unlinking them stops network capture until those containers restart. Clear via `make reset`, or restart `gateway`/`netcap` after any such deletion.
