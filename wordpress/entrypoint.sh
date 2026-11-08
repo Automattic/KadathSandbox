@@ -49,6 +49,16 @@ if [ ! -f /var/www/html/wp-includes/version.php ]; then
   cp -a /usr/src/wordpress/. /var/www/html/
 fi
 
+# 3b. WordPress's own HTTP API (wp_remote_get & co., what most WordPress malware uses to
+# talk to its C2) verifies TLS against wp-includes/certificates/ca-bundle.crt, not
+# openssl.cafile, so without this every https request it makes fails the handshake and
+# nothing is decrypted. Idempotent; stage.restore_docroot re-applies it after a restore.
+bundle=/var/www/html/wp-includes/certificates/ca-bundle.crt
+if [ -f "$bundle" ] && ! grep -qF "KadathSandbox mitmproxy CA" "$bundle"; then
+  { echo; echo "# KadathSandbox mitmproxy CA"; cat /gateway-ca/mitmproxy-ca-cert.pem; } >> "$bundle"
+  echo "entrypoint: mitmproxy CA appended to WordPress's ca-bundle.crt"
+fi
+
 # 4. wp-config.php
 if [ ! -f /var/www/html/wp-config.php ]; then
   wp config create \

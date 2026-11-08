@@ -39,11 +39,18 @@ sp_dump_records_probe() {
 }
 
 cp tests/probe.php samples/webroot/probe.php
-trap 'rm -f samples/webroot/probe.php' EXIT
+# Best-effort: also remove the .user.ini the php checks plant in the docroot (a volume, so it would persist).
+trap 'rm -f samples/webroot/probe.php; docker compose exec -T wordpress rm -f /var/www/html/.user.ini >/dev/null 2>&1 || true' EXIT
 echo "selftest: starting stack"
 docker compose up -d --build --wait db gateway wpnet netcap wordpress || { echo "FAIL: stack did not become healthy"; docker compose ps -a; exit 1; }
 # Recreate wordpress so the entrypoint links the probe into the webroot.
 docker compose up -d --force-recreate --wait wordpress || { echo "FAIL: wordpress did not become healthy after recreate"; docker compose ps -a; exit 1; }
+
+# Plant a .user.ini in the docroot as uid 33, exactly as a sample could. It tries to repoint
+# error_log and prepend a file, and sets precision (pinned nowhere, so only user_ini.filename=
+# keeps it at 14); the probe below must report the pinned error_log and precision 14.
+docker compose exec -T wordpress sh -c 'printf "error_log=/dev/null\nauto_prepend_file=/dev/null\nprecision=3\n" > /var/www/html/.user.ini' \
+  || { echo "FAIL: could not drop .user.ini into the docroot"; fail=$((fail+1)); }
 
 # Exact set of trace files that exist before the probe request, so the trace assertions
 # below run against a file this run created rather than whatever `ls -t` happens to
@@ -96,8 +103,18 @@ after_db_syn=$(db_syn_count)
 : "${before_db_syn:=x}" "${after_db_syn:=x}"
 echo "selftest: db SYNs captured before=$before_db_syn after=$after_db_syn"
 
+# A connection straight to the proxy port (not REDIRECTed) must be dropped by the gateway:
+# un-NATed, mitmproxy reads its own address as the original destination and loops on itself.
+proxyport_out=$(sandbox_php '$s=@fsockopen("172.30.0.2",8080,$e,$m,3); echo $s ? "connected" : "blocked", PHP_EOL; if ($s) { fclose($s); }')
+# WordPress's HTTP API verifies TLS against its own bundle; the entrypoint appends the
+# mitmproxy CA to it so wp_remote_get() C2 traffic is decrypted like everything else.
+wp_https_out=$(docker compose exec -T -e XDEBUG_MODE=off wordpress wp eval '$r = wp_remote_get("https://example.com/", ["timeout" => 15]); echo is_wp_error($r) ? "WP_Error: " . $r->get_error_message() : "ok " . wp_remote_retrieve_response_code($r);' 2>&1 | tail -n1)
+echo "selftest: wp_remote_get -> $wp_https_out"
+
 check "probe: https via mitmproxy succeeded"        'grep -q "^https: ok" <<<"$out"'
 check "probe: raw TCP 6667 was blocked"             'grep -q "^irc: blocked" <<<"$out"'
+check "php: observation ini keys are pinned (ini_set fails)" 'grep -q "^ini-pinned: yes" <<<"$out"'
+check "php: a .user.ini in the docroot is ignored"  'grep -q "^error_log: /var/log/sandbox/php/php-error.log" <<<"$out" && grep -q "^precision: 14" <<<"$out"'
 check "xdebug: new trace file written"              '[ -n "$new_traces" ]'
 check "xdebug: this run's trace records system()"   'grep -q "system" "$trace"'
 check "xdebug: this run's trace records eval payload" 'grep -q "return 1+1" "$trace"'
@@ -109,6 +126,8 @@ check "dnsmasq: selftest lookup logged"             'tail -c +$((before_dns+1)) 
 check "netns: only default route is via gateway"    '[ "$(grep -c "^default" <<<"$route_out")" = 1 ] && grep -q "^default via 172.30.0.2" <<<"$route_out"'
 check "netns: OUTPUT policy is DROP"                'docker compose run --rm --no-deps --entrypoint sh netguard -c "iptables -S OUTPUT | grep -q -- \"-P OUTPUT DROP\""'
 check "gateway: HTTP to RFC1918 192.168.0.1 refused" 'grep -q "bool(false)" <<<"$rfc1918_out"'
+check "gateway: direct connection to the proxy port is dropped" 'grep -q "^blocked" <<<"$proxyport_out"'
+check "wordpress: wp_remote_get over https is decrypted (WP trusts the proxy CA)" 'grep -q "^ok 200" <<<"$wp_https_out"'
 check "netns: TCP to docker host 172.30.0.1:9999 is dropped, not refused" \
       'grep -q "res=false" <<<"$hostconn_out" && awk -v e="$hostconn_elapsed" "BEGIN { exit !(e >= 2.5) }"'
 check "netcap: 5 SYNs to the db appear as 5 captured packets" \

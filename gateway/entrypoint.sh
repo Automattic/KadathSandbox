@@ -40,7 +40,12 @@ iptables -P FORWARD DROP
 iptables -P INPUT DROP
 iptables -A INPUT -i lo -j ACCEPT
 iptables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-iptables -A INPUT -i "$INT" -p tcp --dport 8080 -j ACCEPT
+# Only REDIRECTed connections may reach mitmproxy. A sample that connects straight to
+# 172.30.0.2:8080 is not NATed, so SO_ORIGINAL_DST hands mitmproxy its own address and it
+# connects to itself in a tight loop (one raw connect produced ~34k self-connections in
+# testing): a one-line denial of service against the observation layer. The OUTPUT rule
+# below is the belt to this brace.
+iptables -A INPUT -i "$INT" -p tcp --dport 8080 -m conntrack --ctstate DNAT -j ACCEPT
 iptables -A INPUT -i "$INT" -p udp --dport 53 -j ACCEPT
 iptables -A INPUT -i "$INT" -p tcp --dport 53 -j ACCEPT
 iptables -A INPUT -i "$EGR" -p tcp --dport 8081 -j ACCEPT
@@ -50,6 +55,7 @@ iptables -A INPUT -i "$EGR" -p tcp --dport 8081 -j ACCEPT
 # network are untouched. Replies on connections that were already accepted -- most
 # importantly the analyst's mitmweb session arriving from the bridge gateway address,
 # which itself sits in a blocked range -- are let through before the REJECTs.
+iptables -A OUTPUT -o lo -p tcp --dport 8080 -j REJECT --reject-with tcp-reset
 iptables -A OUTPUT -o "$EGR" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 for cidr in $GATEWAY_BLOCKED_DESTS; do
   iptables -A OUTPUT -o "$EGR" -d "$cidr" -j REJECT --reject-with icmp-admin-prohibited

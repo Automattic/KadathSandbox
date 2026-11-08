@@ -1,7 +1,9 @@
 .PHONY: up down reset selftest snapshot logs trace shell build offer web pilgrimage pilgrimage-smoke
 
+# --wait-timeout: wordpress has restart: unless-stopped, so an entrypoint FATAL (route guard,
+# CA, DB) restart-loops instead of exiting; without a bound, --wait would hang on it.
 up:
-	docker compose up -d --build --wait db gateway wpnet netcap wordpress
+	docker compose up -d --build --wait --wait-timeout 300 db gateway wpnet netcap wordpress
 
 down:
 	docker compose --profile trace down --remove-orphans
