@@ -1,3 +1,6 @@
+# bash, not /bin/sh: the snapshot recipe uses `read -d ''` to survive newlines in filenames.
+SHELL := /bin/bash
+
 .PHONY: up down reset selftest snapshot logs trace shell build offer web pilgrimage pilgrimage-smoke
 
 # --wait-timeout: wordpress has restart: unless-stopped, so an entrypoint FATAL (route guard,
@@ -24,13 +27,13 @@ selftest:
 # what has already been written. Snapshotting off the live tree after every offering
 # is what makes that a nuisance instead of a loss.
 snapshot:
-	@ts=$$(date +%Y%m%d-%H%M%S); dir=snapshots/$$ts; \
+	@set -e; ts=$$(date +%Y%m%d-%H%M%S); dir=snapshots/$$ts; \
 	  mkdir -p "$$dir/artifacts"; \
-	  ( cd artifacts && find . -type f ! -name .gitkeep | while read -r f; do \
-	      mkdir -p "../$$dir/artifacts/$$(dirname "$$f")"; \
+	  ( cd artifacts && find . -type f ! -name .gitkeep -print0 | while IFS= read -r -d '' f; do \
+	      mkdir -p -- "../$$dir/artifacts/$$(dirname -- "$$f")" || exit 1; \
 	      case "$$f" in \
-	        *.xt|*.log|*.mitm) gzip -c "$$f" > "../$$dir/artifacts/$$f.gz" ;; \
-	        *) cp -a "$$f" "../$$dir/artifacts/$$f" ;; \
+	        *.xt|*.log|*.mitm) gzip -c -- "$$f" > "../$$dir/artifacts/$$f.gz" || exit 1 ;; \
+	        *) cp -a -- "$$f" "../$$dir/artifacts/$$f" || exit 1 ;; \
 	      esac; \
 	    done ); \
 	  docker compose logs --no-color wordpress gateway > "$$dir/compose-logs.txt" 2>&1 || true; \

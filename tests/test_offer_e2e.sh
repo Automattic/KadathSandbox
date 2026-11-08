@@ -15,7 +15,7 @@ ck "probe: valid json"                     'python3 -c "import json;json.load(op
 ck "probe: no users added"                 'python3 -c "import json;s=json.load(open(\"'"$RUN"'\"));import sys;sys.exit(0 if s[\"db_diff\"][\"users_added\"]==[] else 1)"'
 ck "probe: callchain non-empty"            'python3 -c "import json;s=json.load(open(\"'"$RUN"'\"));import sys;sys.exit(0 if s[\"callchain\"] else 1)"'
 ck "probe: example.com flow recorded"      'python3 -c "import json;s=json.load(open(\"'"$RUN"'\"));import sys;sys.exit(0 if any(\"example.com\"==f[\"host\"] for f in s[\"network\"][\"flows\"]) else 1)"'
-ck "probe: 6667 in dropped"                'python3 -c "import json;s=json.load(open(\"'"$RUN"'\"));import sys;sys.exit(0 if any(d[\"port\"]==6667 for d in s[\"network\"][\"dropped\"]) else 1)"'
+ck "probe: 853 in dropped"                 'python3 -c "import json;s=json.load(open(\"'"$RUN"'\"));import sys;sys.exit(0 if any(d[\"port\"]==853 for d in s[\"network\"][\"dropped\"]) else 1)"'
 
 # 2. real backdoor, if the library is checked out
 BD=~/WORK/jetpack-threat-library/threats/php_backdoor_createhide_admin_001_4/integrity-scanner-156.php

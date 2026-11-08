@@ -1,5 +1,13 @@
 name: kadath
 
+# Every service gets a capped json-file log: php-fpm's catch_workers_output otherwise lets a
+# sample grow the Docker log of the wordpress container without bound.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "3"
+
 networks:
   sandbox_internal:
     internal: true
@@ -39,6 +47,7 @@ services:
     volumes:
       - db_data:/var/lib/mysql
     security_opt: [no-new-privileges:true]
+    logging: *default-logging
     healthcheck:
       test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
       interval: 5s
@@ -48,7 +57,19 @@ services:
   gateway:
     build: ./gateway
     init: true
-    cap_add: [NET_ADMIN]
+    # The gateway terminates the sample's traffic, so it is the most exposed container: least
+    # privilege. Nothing is forwarded (REDIRECT delivers locally, FORWARD is DROP), so
+    # ip_forward is off. NET_ADMIN: iptables (nf_tables backend, so no NET_RAW); NET_BIND_SERVICE:
+    # dnsmasq on :53; SETUID/SETGID: dnsmasq drops to nobody. NET_RAW, CHOWN and DAC_OVERRIDE
+    # were tried and are not needed (root owns the mounted artifact files).
+    sysctls:
+      net.ipv4.ip_forward: 0
+    cap_drop: [ALL]
+    cap_add: [NET_ADMIN, NET_BIND_SERVICE, SETUID, SETGID]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 1g
+    restart: unless-stopped
+    logging: *default-logging
     networks:
       sandbox_internal:
         ipv4_address: 172.30.0.2
@@ -57,7 +78,10 @@ services:
       - "127.0.0.1:8081:8081"
     volumes:
       - gateway_ca:/gateway-ca
-      - ./artifacts:/artifacts
+      # Only what the gateway writes (flows.mitm, dns.log), at the same container paths: the
+      # engine runs `mitmdump -r /artifacts/mitm/flows.mitm` in here.
+      - ./artifacts/mitm:/artifacts/mitm
+      - ./artifacts/dns:/artifacts/dns
     environment:
       MITMWEB_PASSWORD: ${MITMWEB_PASSWORD:-sandbox}
       MITM_EXTRA_ARGS: ${MITM_EXTRA_ARGS:-}
@@ -81,17 +105,20 @@ services:
       - "127.0.0.1:8088:8080"
     sysctls:
       net.ipv6.conf.all.disable_ipv6: 1
+      net.ipv6.conf.default.disable_ipv6: 1
     volumes:
       - ./wordpress/resolv.conf:/etc/resolv.conf:ro
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     read_only: true
+    logging: *default-logging
 
   netguard:
     build: ./netguard
     network_mode: "service:wpnet"
     cap_add: [NET_ADMIN]
     restart: "no"
+    logging: *default-logging
     depends_on:
       wpnet:
         condition: service_started
@@ -105,8 +132,11 @@ services:
     init: true
     restart: unless-stopped
     cap_drop: [ALL]
-    cap_add: [NET_RAW, NET_ADMIN]
+    # NET_RAW only: capturing needs it, nothing here needs to touch the namespace's config
+    # (dissecting sample-chosen packets as root with NET_ADMIN would be a needless risk).
+    cap_add: [NET_RAW]
     read_only: true
+    logging: *default-logging
     security_opt: [no-new-privileges:true]
     volumes:
       - ./artifacts:/artifacts
@@ -130,6 +160,7 @@ services:
     pids_limit: 512
     mem_limit: 1g
     cpus: 2
+    logging: *default-logging
     # A sample shares supervisord's uid and can kill it; without this the stack stays down until
     # `make up`. Safe for containment: the network namespace belongs to `wpnet`, so netguard's
     # iptables rules survive a restart, and entrypoint.sh step 7 refuses to start unless the single
@@ -179,7 +210,7 @@ services:
       netcap:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-sf", "-o", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      test: ["CMD", "sh", "-c", "curl -sf http://127.0.0.1:8080/fpm-ping | grep -q pong"]
       interval: 5s
       timeout: 5s
       retries: 30
@@ -188,6 +219,7 @@ services:
   tracer:
     build: ./tracer
     profiles: [trace]
+    logging: *default-logging
     pid: "service:wordpress"
     privileged: true
     network_mode: none
