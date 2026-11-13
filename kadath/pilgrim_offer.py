@@ -45,17 +45,16 @@ class EngineError(RuntimeError):
 
 def final_verdict(det_level, model_level, cavern_level=None, runes_level=None):
     """max on red > amber > green over the deterministic, model, and (when
-    given) the Cavern and Runes static verdicts; who won is recorded, ties going
-    to the evidence in order deterministic > runes > cavern > model. A
-    disagreement is routed to the Deep Scrying by the orchestrator, never
-    downgraded here."""
-    levels = {"deterministic": det_level, "model": model_level}
-    if cavern_level is not None:
-        levels["cavern"] = cavern_level
-    if runes_level is not None:
-        levels["runes"] = runes_level
+    given) the Cavern and Runes static verdicts; None levels are ignored. Who won
+    is recorded, ties going to the evidence in order deterministic > runes >
+    cavern > model. A disagreement is routed to the Deep Scrying by the
+    orchestrator, never downgraded here."""
+    levels = {k: x for k, x in (("deterministic", det_level), ("model", model_level),
+                                ("cavern", cavern_level), ("runes", runes_level)) if x is not None}
+    if not levels:
+        return "green", "agree"
     if len(set(levels.values())) == 1:
-        return det_level, "agree"
+        return next(iter(levels.values())), "agree"
     top = max(ORDER[v] for v in levels.values())
     for who in ("deterministic", "runes", "cavern", "model"):
         if who in levels and ORDER[levels[who]] == top:
@@ -135,6 +134,15 @@ def flow_bodies(root, epoch, timeout=120):
         return [], str(e)
 
 
+def drop_core_bodies(bodies, summary):
+    """Keep only the bodies of flows the engine did NOT verify as WordPress core.
+    flowbody emits every flow; the engine's flow list carries wp_core checked
+    against the DNS log (a spoofed Host header is not core)."""
+    core = {(f.get("host"), f.get("method"), f.get("path"))
+            for f in summary.get("network", {}).get("flows", []) if f.get("wp_core")}
+    return [b for b in bodies if (b.get("host"), b.get("method"), b.get("path")) not in core]
+
+
 def _fence(title, body, lang=""):
     body = body.replace("```", "'''")
     if lang:
@@ -183,21 +191,26 @@ def _fatal_in_run(run_dir):
     return False
 
 
-def _finish_from_runes(kd, cav, runes_read, stderr, client):
-    """The Offering could not run the sample; record a verdict from the Runes'
-    static read (coverage errored) so the broken-sample loop ends here."""
+def _finish_from_runes(kd, cav, runes_read, stderr, client, det=None, run_dir=""):
+    """The Offering could not finish; record a verdict from the Runes' static
+    read (coverage errored) so the broken-sample loop ends here. When the sample
+    did detonate (the verdict model failed afterwards), `det` and `run_dir` keep
+    the deterministic level in the verdict and the bundle available to the scry."""
     static = {"cavern": cav.get("verdict") or "green", "runes": runes_read["verdict"]}
     level = max(static.values(), key=lambda x: ORDER[x])
     decided = "runes" if ORDER[static["runes"]] == ORDER[level] else "cavern"
+    if det is not None and ORDER[det["level"]] > ORDER[level]:
+        level, decided = det["level"], "deterministic"
     fatals = [l for l in stderr.splitlines() if "Fatal" in l or "Parse error" in l][-3:]
     out = {"verdict": level, "decided_by": decided, "confidence": runes_read.get("confidence", 0.5),
-           "deterministic": {"level": "green", "reasons": []}, "model_verdict": None,
+           "deterministic": det if det is not None else {"level": "green", "reasons": []},
+           "model_verdict": None,
            "cavern_verdict": cav.get("verdict"), "runes_verdict": runes_read["verdict"],
            "coverage": "errored", "stubs": [], "adopted": False, "fatals": fatals,
            "iocs_extra": runes_read.get("iocs_extra", []), "persistence": runes_read.get("persistence", []),
            "reason": "the Offering did not complete (engine or verdict model); verdict from the Runes static read. "
                      + runes_read.get("reason", "")[:300],
-           "yara": "runes-only", "run_dir": "", "model": client.model,
+           "yara": "runes-only", "run_dir": run_dir, "model": client.model,
            "sampling": dict(client.profiles["offer"]), "prompt_sha256": {}, "at": manifest.now_iso()}
     with open(os.path.join(kd, "verdict.json"), "w") as f:
         json.dump(out, f, indent=2)
@@ -206,6 +219,16 @@ def _finish_from_runes(kd, cav, runes_read, stderr, client):
                 "complete; the verdict is the Runes static read of the (deobfuscated) code.\n\n"
                 + "**Verdict:** " + level + " (" + decided + ").  " + out["reason"] + "\n")
     return out
+
+
+def _chat(client, det, run_dir, *a, **kw):
+    """client.chat, but an LLMError after the detonation carries the deterministic
+    verdict and run bundle so the orchestrator's fallback does not discard them."""
+    try:
+        return client.chat(*a, **kw)
+    except llm.LLMError as e:
+        e.det, e.run_dir = det, run_dir
+        raise
 
 
 def run(case, row, client, root, prompts_dir, engine_cmd):
@@ -242,6 +265,7 @@ def run(case, row, client, root, prompts_dir, engine_cmd):
         traces = sorted(os.path.join(bundle, n) for n in os.listdir(bundle)) if os.path.isdir(bundle) else []
     trace_text = trace_excerpt(traces)
     bodies, flow_bodies_error = flow_bodies(root, summ.get("run", {}).get("epoch", 0))
+    bodies = drop_core_bodies(bodies, summ)
     pack = evidence_pack(summ, cav, det, trace_text, bodies, runes_read)
     with open(os.path.join(run_dir, "evidence.json"), "w") as f:
         json.dump({"trace_excerpt": trace_text, "flow_bodies": bodies, "network": summ.get("network"),
@@ -255,10 +279,11 @@ def run(case, row, client, root, prompts_dir, engine_cmd):
             f"php_fatal={fatal}; dependency_stubs={len(stubs_made)}; "
             f"adopted_as_plugin={run_meta.get('adopted', False)}\n")
     sys_v, sha_v = load_prompt(prompts_dir, "offer_verdict")
-    r1 = client.chat([{"role": "system", "content": sys_v},
-                      {"role": "user", "content": pack + hint + "\nReply with the verdict JSON only."}],
-                     profile="offer", json_schema=VERDICT_SCHEMA, think=False,
-                     validate=lambda o: llm.validate_against(VERDICT_SCHEMA, o))
+    r1 = _chat(client, det, run_dir,
+               [{"role": "system", "content": sys_v},
+                {"role": "user", "content": pack + hint + "\nReply with the verdict JSON only."}],
+               profile="offer", json_schema=VERDICT_SCHEMA, think=False,
+               validate=lambda o: llm.validate_against(VERDICT_SCHEMA, o))
     mv = r1["parsed"]
     # coverage: a fatal beats everything; a failed admin login or a sample that
     # never got its password ran only its idle path; a sample that ran against
@@ -286,7 +311,7 @@ def run(case, row, client, root, prompts_dir, engine_cmd):
     report_md = None
     yara = None
     for attempt in range(2):
-        r2 = client.chat(msgs, profile="offer", think=False)
+        r2 = _chat(client, det, run_dir, msgs, profile="offer", think=False)
         try:
             report_md, yara = split_report(r2["content"])
         except ValueError:

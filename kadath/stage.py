@@ -3,11 +3,13 @@ container recreate is done by run.py via shell.run."""
 import json
 import os
 import re
+import shlex
 import shutil
 import sys
 import zipfile
 from datetime import datetime, timezone
 from kadath import detect
+from kadath.shell import ShellError
 
 _KEEP_PLUGINS = {"akismet", "hello"}
 _SAMPLE_SUBS = ("plugins", "themes", "webroot")
@@ -131,8 +133,12 @@ def _post_ids(wp_exec):
 def _install_id(wp_exec):
     """Fingerprint of this WordPress install: the admin's registration time,
     set once by the installer. A manual `make reset` gives a new DB and a new
-    value, which makes a baseline recorded against the old DB stale."""
-    return (wp_exec(["user", "get", "1", "--field=user_registered"]) or "").strip()
+    value, which makes a baseline recorded against the old DB stale. "" when
+    user 1 cannot be read (a sample deleted it, or the container is unwell)."""
+    try:
+        return (wp_exec(["user", "get", "1", "--field=user_registered"]) or "").strip()
+    except ShellError:
+        return ""
 
 
 def db_snapshot(wp_exec):
@@ -152,19 +158,30 @@ def record_db_baseline(root, wp_exec):
     return path
 
 
-def load_db_baseline(root, wp_exec):
-    """The recorded baseline, or None when there is none or it belongs to a
-    different install (the DB was recreated under it)."""
+def _baseline_state(root, wp_exec):
+    """(baseline, status): status is "ok", "none" (no usable file), "stale" (it
+    belongs to a different install: the DB was recreated under it) or
+    "unverifiable" (it names an install but the live one cannot be read)."""
     try:
         with open(os.path.join(root, DB_BASELINE)) as f:
             b = json.load(f)
     except (OSError, ValueError):
-        return None
+        return None, "none"
     if not isinstance(b, dict) or not all(isinstance(b.get(k), list) for k in ("options", "cron", "posts")):
-        return None
-    if b.get("install") and b["install"] != _install_id(wp_exec):
-        return None
-    return b
+        return None, "none"
+    if b.get("install"):
+        live = _install_id(wp_exec)
+        if not live:
+            return None, "unverifiable"
+        if b["install"] != live:
+            return None, "stale"
+    return b, "ok"
+
+
+def load_db_baseline(root, wp_exec):
+    """The recorded baseline, or None when there is none, it belongs to a
+    different install, or it cannot be validated."""
+    return _baseline_state(root, wp_exec)[0]
 
 
 def reset_db(wp_exec, baseline):
@@ -210,7 +227,8 @@ def prune_active_plugins(wp_exec):
     return removed
 
 
-def isolate(root, wp_exec):
+def isolate(root, wp_exec, warnings=None):
+    """warnings (a list) collects what the caller should surface in the report."""
     actions = []
     listing = wp_exec(["plugin", "list", "--field=name", "--status=active"])
     for name in [n.strip() for n in listing.splitlines() if n.strip()]:
@@ -233,8 +251,15 @@ def isolate(root, wp_exec):
     # mount, so its active_plugins entry is now one without a file
     for f in prune_active_plugins(wp_exec):
         actions.append(f"remove stale active_plugins entry {f}")
-    baseline = load_db_baseline(root, wp_exec)
-    if baseline is None:
+    baseline, status = _baseline_state(root, wp_exec)
+    if status == "unverifiable":
+        # recording from the live DB here would bless whatever the last sample left
+        msg = "db baseline could not be validated; residue may remain"
+        print(f"warning: {msg}", file=sys.stderr)
+        if warnings is not None:
+            warnings.append(msg)
+        actions.append("db baseline unverifiable; db reset skipped")
+    elif baseline is None:
         path = record_db_baseline(root, wp_exec)
         print(f"note: no DB baseline for this install; recorded one from the live database at "
               f"{path} and skipped the DB reset this run (`--reset` records a pristine one)",
@@ -252,16 +277,30 @@ def isolate(root, wp_exec):
 # file. That persists into the NEXT offering and pollutes its evidence, so the
 # docroot is put back to the image's pristine tree (/usr/src/wordpress) first.
 # wp-config.php goes too: appending to it is textbook WordPress persistence, and
-# the entrypoint regenerates it (fresh salts) on the recreate that follows; every
-# `wp` call of this offering happens after that. Symlinks go unconditionally (the pristine tree
-# ships none, and a sample could swap a core dir for a link that would redirect
-# the cp below); the entrypoint recreates the /samples links on recreate. DB
-# residue is isolate()'s job (reset_db above). The cp also reverts the mitmproxy CA the
-# entrypoint appended to WordPress's own TLS bundle, so that is re-applied last.
+# the entrypoint regenerates it (fresh salts) on the recreate that follows.
+# Every wp call that reads evidence (the before/after DB state) runs after that
+# recreate; the cleanup's own wp calls (isolate) run before this restore, so
+# run.py checks docroot_tainted() first and restores+recreates ahead of isolate
+# when the previous sample left persisted code behind. Symlinks go
+# unconditionally (the pristine tree ships none, and a sample could swap a core
+# dir for a link that would redirect the cp below); the entrypoint recreates
+# the /samples links on recreate. DB residue is isolate()'s job (reset_db
+# above). The cp also reverts the mitmproxy CA the entrypoint appended to
+# WordPress's own TLS bundle, so that is re-applied last.
+# Run with bash (read -d ''): names are attacker data and may hold newlines. The
+# sample owns the tree and can chmod a directory read-only to stop the cleanup,
+# so permissions are reset first; a file where the pristine tree has a directory
+# (and the reverse) would make cp fail, so the conflicting path is removed.
 RESTORE_DOCROOT_SH = r"""set -e
 cd /var/www/html
+chmod -R u+rwX . || true
 find . -type l -delete
-find . \( -type f -o -type l \) -print | while IFS= read -r f; do [ -e "/usr/src/wordpress/$f" ] || rm -f "$f"; done
+find . -mindepth 1 ! -type d -print0 | while IFS= read -r -d '' f; do
+  if [ ! -e "/usr/src/wordpress/$f" ] || [ -d "/usr/src/wordpress/$f" ]; then rm -f -- "$f"; fi
+done
+find . -mindepth 1 -type d -print0 | while IFS= read -r -d '' d; do
+  if [ -e "/usr/src/wordpress/$d" ] && [ ! -d "/usr/src/wordpress/$d" ]; then rm -rf -- "$d"; fi
+done
 find . -mindepth 1 -type d -empty -delete
 cp -a /usr/src/wordpress/. /var/www/html/
 # the pristine bundle does not trust the proxy; re-apply what the entrypoint did
@@ -273,8 +312,58 @@ fi
 
 
 def restore_docroot(sh_exec):
+    """sh_exec(script) runs the script under bash in the wordpress container.
+    Raises whatever it raises (a ShellError on a failed restore)."""
     sh_exec(RESTORE_DOCROOT_SH)
     return "restored docroot from pristine core"
+
+
+# What a wp call would load: it bootstraps wp-config.php, mu-plugins and the
+# drop-ins even with --skip-plugins, so a sample that planted any of them can
+# filter the DB state wp reports. No PHP here: POSIX sh over find/sha256sum.
+# $1 is the expected sha256 of wp-config.php ("" = do not compare). One line
+# per indicator; names are scrubbed to printable characters.
+TAINT_CHECK_SH = r"""cd /var/www/html 2>/dev/null || { echo "docroot unreadable"; exit 0; }
+if [ -L wp-content/mu-plugins ]; then echo "wp-content/mu-plugins is a symlink"; fi
+find wp-content/mu-plugins ! -type d -exec sh -c 'for f; do printf "%s\n" "$(printf %s "$f" | tr -c "[:print:]" "?")"; done' _ {} + 2>/dev/null
+for d in db.php object-cache.php advanced-cache.php sunrise.php fatal-error-handler.php php-error.php; do
+  if [ -e "wp-content/$d" ] || [ -L "wp-content/$d" ]; then echo "wp-content/$d"; fi
+done
+if [ -L wp-config.php ]; then echo "wp-config.php is a symlink"; fi
+if [ -n "$1" ]; then
+  cur="$(sha256sum wp-config.php 2>/dev/null | cut -d' ' -f1)"
+  if [ "$cur" != "$1" ]; then echo "wp-config.php changed"; fi
+fi
+"""
+
+WP_CONFIG_SHA_SH = "sha256sum /var/www/html/wp-config.php 2>/dev/null || true"
+_SHA256 = re.compile(r"\b[0-9a-f]{64}\b")
+
+
+def _stdout(r):
+    return getattr(r, "stdout", r) or ""
+
+
+def docroot_tainted(sh_exec, wp_config_sha=""):
+    """Indicators that persisted code would run inside a wp call: anything in
+    mu-plugins, a drop-in, or a wp-config.php that is not the one with
+    wp_config_sha. [] when clean. sh_exec(script) runs it in the container."""
+    script = "set -- " + shlex.quote(wp_config_sha or "") + "\n" + TAINT_CHECK_SH
+    return [l.strip() for l in _stdout(sh_exec(script)).splitlines() if l.strip()]
+
+
+def wp_config_sha(sh_exec):
+    """sha256 of the container's wp-config.php, "" when it cannot be read."""
+    m = _SHA256.search(_stdout(sh_exec(WP_CONFIG_SHA_SH)))
+    return m.group(0) if m else ""
+
+
+def _has_marker(path, marker):
+    try:
+        with open(path, "r", errors="replace") as f:
+            return marker in f.read(8192)
+    except (OSError, ValueError):
+        return False
 
 
 def _classify_dir(path):
@@ -282,36 +371,57 @@ def _classify_dir(path):
     - ("plugin", <dir containing the plugin main .php>)
     - ("theme",  <dir containing style.css with 'Theme Name:'>)
     - ("webshell", <the single .php file>)
+    The package's own top level wins over anything nested (an assets/style.css
+    carrying 'Theme Name:' must not turn a plugin into a theme): plugin header
+    in a .php directly under path, then a theme style.css directly under it,
+    then the deep searches, plugin before theme.
     Raises detect.UnsupportedSample if none match."""
     # descend through a single wrapper directory (the WordPress packaging convention)
     entries = [e for e in os.listdir(path) if not e.startswith("__MACOSX")]
     if len(entries) == 1 and os.path.isdir(os.path.join(path, entries[0])):
         path = os.path.join(path, entries[0])
-    # theme: style.css with a Theme Name header, anywhere from here down
-    for root, _dirs, files in os.walk(path):
-        if "style.css" in files:
-            sc = os.path.join(root, "style.css")
-            try:
-                with open(sc, "r", errors="replace") as f:
-                    if "Theme Name:" in f.read(8192):
-                        return ("theme", root)
-            except OSError:
-                pass
-    # plugin: a .php with a Plugin Name header
-    for root, _dirs, files in os.walk(path):
-        for fn in files:
-            if fn.endswith(".php"):
-                try:
-                    with open(os.path.join(root, fn), "r", errors="replace") as f:
-                        if "Plugin Name:" in f.read(8192):
-                            return ("plugin", root)
-                except OSError:
-                    pass
+    for fn in sorted(os.listdir(path)):
+        if fn.endswith(".php") and _has_marker(os.path.join(path, fn), "Plugin Name:"):
+            return ("plugin", path)
+    if _has_marker(os.path.join(path, "style.css"), "Theme Name:"):
+        return ("theme", path)
+    for root, _dirs, files in sorted(os.walk(path)):
+        for fn in sorted(files):
+            if fn.endswith(".php") and _has_marker(os.path.join(root, fn), "Plugin Name:"):
+                return ("plugin", root)
+    for root, _dirs, files in sorted(os.walk(path)):
+        if "style.css" in files and _has_marker(os.path.join(root, "style.css"), "Theme Name:"):
+            return ("theme", root)
     # webshell: exactly one .php in the tree
     phps = [os.path.join(r, fn) for r, _d, fs in os.walk(path) for fn in fs if fn.endswith(".php")]
     if len(phps) == 1:
         return ("webshell", phps[0])
     raise detect.UnsupportedSample(f"zip contents at {path}: no plugin header, theme style.css, or single .php found")
+
+
+# The wordpress entrypoint links /samples/webroot/<name> into the docroot but
+# refuses index.php, wp-config.php, dotfiles and any name that is already a real
+# docroot file. Staging one of those would leave the engine GETting the real
+# WordPress file while the report says it ran the sample.
+_CORE_TOP_LEVEL = frozenset((
+    "index.php", "wp-config.php", "wp-config-sample.php", "wp-config-docker.php",
+    "wp-login.php", "xmlrpc.php", "wp-cron.php", "wp-settings.php", "wp-load.php",
+    "wp-blog-header.php", "wp-activate.php", "wp-comments-post.php",
+    "wp-links-opml.php", "wp-mail.php", "wp-signup.php", "wp-trackback.php",
+    "readme.html", "license.txt"))
+
+
+def check_webroot_name(name):
+    """Raise detect.UnsupportedSample if a loose PHP file called name cannot be
+    served from the docroot under that name."""
+    base = os.path.basename(name)
+    if base in _CORE_TOP_LEVEL or base.startswith(".") or not base:
+        raise detect.UnsupportedSample(
+            f"{base!r} cannot be offered as a loose file: the sandbox refuses to link it into "
+            "the docroot (it is a WordPress entry point or a dotfile), so the engine would "
+            "request WordPress's own file. Rename the sample, or offer it as a plugin "
+            "(--adopt-wp)")
+    return base
 
 
 # Zip bombs: a few KB of zip can expand to terabytes under .kadath/unpack. The
@@ -345,14 +455,15 @@ def place(root, sample_path, detected, unpack_dir=None):
         if kind == "plugin":
             dest = os.path.join(root, "samples/plugins", detected.slug)
             os.makedirs(dest, exist_ok=True)
-            shutil.copytree(src, dest, dirs_exist_ok=True)
+            shutil.copytree(src, dest, symlinks=True, dirs_exist_ok=True)
             return dest
         if kind == "theme":
             dest = os.path.join(root, "samples/themes", detected.slug)
             os.makedirs(dest, exist_ok=True)
-            shutil.copytree(src, dest, dirs_exist_ok=True)
+            shutil.copytree(src, dest, symlinks=True, dirs_exist_ok=True)
             return dest
         # webshell
+        check_webroot_name(src)
         dest = os.path.join(root, "samples/webroot", os.path.basename(src))
         os.makedirs(os.path.dirname(dest), exist_ok=True)
         shutil.copy2(src, dest)
@@ -361,10 +472,11 @@ def place(root, sample_path, detected, unpack_dir=None):
     if detected.type in ("plugin", "theme"):
         os.makedirs(dest, exist_ok=True)
         if os.path.isdir(sample_path):
-            shutil.copytree(sample_path, dest, dirs_exist_ok=True)
+            shutil.copytree(sample_path, dest, symlinks=True, dirs_exist_ok=True)
         else:
             shutil.copy2(sample_path, dest)
     else:  # webshell -> single file into webroot
+        check_webroot_name(dest)
         os.makedirs(os.path.dirname(dest), exist_ok=True)
         shutil.copy2(sample_path, dest)
     return dest

@@ -6,6 +6,8 @@ functions get no-op shims appended to the stub that should have defined them."""
 import os
 import re
 
+from kadath.traceparse import open_regular, regular_size
+
 _REQUIRED = re.compile(r"Failed opening (?:required )?'(/samples/[^']+)'")
 _INCLUDE_STREAM = re.compile(r"(?:include|require)(?:_once)?\((/samples/[^)]+)\): Failed to open stream")
 _UNDEFINED = re.compile(r"Call to undefined function ([A-Za-z_][A-Za-z0-9_]*)\(\) in /samples/")
@@ -32,11 +34,12 @@ def fatal_lines(lines, limit=3):
 
 
 def new_lines(path, offset):
+    # php-error.log lives in a sample-writable dir: never follow a planted link or open a FIFO
     try:
-        with open(path, "r", errors="replace") as f:
+        with open_regular(path, text=True) as f:
             f.seek(offset)
             return [l.rstrip("\n") for l in f if l.strip()]
-    except OSError:
+    except (OSError, ValueError):
         return []
 
 
@@ -70,11 +73,14 @@ def undefined_classes(lines):
 def host_path(container_path, root):
     """Map /samples/<sub>/<rel> to <root>/samples/<sub>/<rel>; None if it would
     escape samples/ or names the mount root itself."""
-    base = os.path.realpath(os.path.join(root, "samples"))
-    if not container_path.startswith("/samples/"):
+    if not container_path.startswith("/samples/") or "\0" in container_path:
         return None
-    rel = container_path[len("/samples/"):]
-    target = os.path.realpath(os.path.join(base, rel))
+    try:
+        base = os.path.realpath(os.path.join(root, "samples"))
+        rel = container_path[len("/samples/"):]
+        target = os.path.realpath(os.path.join(base, rel))
+    except (OSError, ValueError):
+        return None
     if not target.startswith(base + os.sep) or target.count(os.sep) <= base.count(os.sep) + 1:
         return None
     return target
@@ -87,20 +93,20 @@ def static_includes(source):
     out = []
     for m in _STATIC_INC.finditer(source):
         rel = m.group(1) or m.group(2)
-        if ".." in rel or rel in out:
+        if ".." in rel or "\0" in rel or rel in out:
             continue
         out.append(rel)
     return out
 
 
 def write_stub(path):
-    if os.path.exists(path):
-        return False
     try:
+        if os.path.lexists(path):
+            return False
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w") as f:
             f.write(STUB_HEADER)
-    except OSError:
+    except (OSError, ValueError):       # ValueError: an embedded NUL in the name
         return False
     return True
 
@@ -165,10 +171,7 @@ def stub_rounds(root, err_log, err_off, retrigger, max_rounds=5, stub_files=None
     offset = err_off
     for rnd in range(1, max_rounds + 1):
         lines = new_lines(err_log, offset)
-        try:
-            offset = os.path.getsize(err_log)
-        except OSError:
-            offset = 0
+        offset = regular_size(err_log)
         fatal = any(is_fatal(l) for l in lines)
         if not fatal:
             return made, False

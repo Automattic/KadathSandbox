@@ -3,6 +3,7 @@ client with schema-constrained output and a single validation retry, and a
 minimal JSON-schema validator (stdlib only, so no jsonschema dependency)."""
 import copy
 import json
+import math
 import os
 import urllib.error
 import urllib.request
@@ -78,6 +79,9 @@ def validate_against(schema, obj, path="$"):
     elif t == "number":
         if isinstance(obj, bool) or not isinstance(obj, (int, float)):
             raise ValueError(f"{path}: expected number")
+        # json.loads accepts NaN/Infinity, and nan passes every bound check
+        if isinstance(obj, float) and not math.isfinite(obj):
+            raise ValueError(f"{path}: not a finite number")
     elif t in _TYPES and not isinstance(obj, _TYPES[t]):
         raise ValueError(f"{path}: expected {t}")
     if "enum" in schema and obj not in schema["enum"]:

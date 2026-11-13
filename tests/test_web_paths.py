@@ -41,7 +41,7 @@ def test_same_basename_prefers_in_repo(tmp_path):
     bad = outside / "dup.txt"
     bad.write_text("escape")
     # both share basename dup.txt; only the in-repo one is valid
-    allow = {os.path.realpath(str(good)), os.path.realpath(str(bad))}
+    allow = [os.path.realpath(str(bad)), os.path.realpath(str(good))]
     got = web_util.safe_artifact_path(str(repo), allow, "dup.txt")
     assert got == os.path.realpath(str(good))
 
@@ -67,3 +67,37 @@ def test_bundle_entry_escaping_repo_is_refused(tmp_path):
     allow = web_util.artifact_allowlist(summary, str(report))
     assert os.path.realpath(str(tmp_path / "secret.txt")) in allow
     assert web_util.safe_artifact_path(str(repo), allow, "secret.txt") is None
+
+
+def test_allowlist_is_ordered_report_then_bundle_then_live(tmp_path):
+    report = tmp_path / "reports" / "x-1"
+    report.mkdir(parents=True)
+    summary = {"artifacts": {"traces": ["/live/t.xt"], "sp_dumps": ["/live/sp.json"],
+                             "pcaps": ["/live/c.pcap"], "bundle": ["artifacts/b.gz", "../x-1/summary.json"]}}
+    allow = web_util.artifact_allowlist(summary, str(report))
+    rp = os.path.realpath
+    assert allow == [rp(str(report / n)) for n in ("summary.json", "iocs.json", "run.env")] + [
+        rp(str(report / "artifacts/b.gz")), rp("/live/t.xt"), rp("/live/sp.json"), rp("/live/c.pcap")]
+    assert isinstance(allow, list) and len(allow) == len(set(allow))   # de-duplicated
+
+def test_report_file_beats_same_basename_bundle_file(tmp_path):
+    repo = tmp_path
+    report = repo / "reports" / "x-1"
+    (report / "artifacts").mkdir(parents=True)
+    (report / "summary.json").write_text("report")
+    (report / "artifacts" / "summary.json").write_text("bundled")
+    summary = {"artifacts": {"bundle": ["artifacts/summary.json"], "traces": [], "sp_dumps": [], "pcaps": []}}
+    allow = web_util.artifact_allowlist(summary, str(report))
+    assert web_util.safe_artifact_path(str(repo), allow, "summary.json") == os.path.realpath(str(report / "summary.json"))
+
+def test_bundle_beats_same_basename_live_file(tmp_path):
+    repo = tmp_path
+    report = repo / "reports" / "x-1"
+    (report / "artifacts").mkdir(parents=True)
+    (repo / "live").mkdir()
+    (repo / "live" / "t.xt").write_text("live")
+    (report / "artifacts" / "t.xt").write_text("bundled")
+    summary = {"artifacts": {"bundle": ["artifacts/t.xt"], "traces": [str(repo / "live" / "t.xt")],
+                             "sp_dumps": [], "pcaps": []}}
+    allow = web_util.artifact_allowlist(summary, str(report))
+    assert web_util.safe_artifact_path(str(repo), allow, "t.xt") == os.path.realpath(str(report / "artifacts" / "t.xt"))

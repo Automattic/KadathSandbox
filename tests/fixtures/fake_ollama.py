@@ -84,7 +84,7 @@ class H(BaseHTTPRequestHandler):
             if req.get("format"):
                 content = json.dumps({"verdict": "red", "confidence": 0.9, "coverage": "full", "iocs_extra": [],
                                       "persistence": ["user"], "reason": "fixture deep",
-                                      "evidence": [{"claim": "admin", "source": "wp_read", "quote": "sys_maint"}]})
+                                      "evidence": [{"claim": "admin", "source": "wp_read", "quote": "\"login\": \"sys_maint\""}]})
             elif not any(m["role"] == "tool" for m in msgs):
                 self._send({"message": {"role": "assistant", "content": "",
                                         "tool_calls": [{"function": {"name": "wp_read", "arguments": {"subcommand": "user list"}}}]}})

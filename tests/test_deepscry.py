@@ -54,14 +54,18 @@ def test_toolbox_refuses_empty_run_dir(tmp_path):
 
 
 def test_verify_claims():
-    outputs = ["line with zz_maint here", "other"]
-    ev = [{"claim": "creates admin", "source": "read_trace", "quote": "zz_maint"},
+    outputs = ["line with wp_create_user('zz_maint') here", "other"]
+    ev = [{"claim": "creates admin", "source": "read_trace", "quote": "wp_create_user('zz_maint')"},
           {"claim": "invented", "source": "read_dns", "quote": "not-there"},
           {"claim": "empty quote", "source": "read_dns", "quote": ""},
-          {"claim": "whitespace quote", "source": "read_dns", "quote": "   "}]
+          {"claim": "whitespace quote", "source": "read_dns", "quote": "   "},
+          {"claim": "too short", "source": "read_trace", "quote": "zz_maint"},        # 8 chars: matches anything
+          {"claim": "short padded", "source": "read_trace", "quote": "  zz_maint  "},  # strip() < 12
+          {"claim": "exactly twelve", "source": "read_trace", "quote": "wp_create_us"}]
+    assert len("wp_create_us") == deepscry.MIN_QUOTE_CHARS == 12
     kept, dropped = deepscry.verify_claims(ev, outputs)
-    assert [k["claim"] for k in kept] == ["creates admin"]
-    assert [d["claim"] for d in dropped] == ["invented", "empty quote", "whitespace quote"]
+    assert [k["claim"] for k in kept] == ["creates admin", "exactly twelve"]
+    assert [d["claim"] for d in dropped] == ["invented", "empty quote", "whitespace quote", "too short", "short padded"]
 
 
 class FakeClient:
@@ -84,7 +88,7 @@ class FakeClient:
                 "parsed": None, "messages": messages + [reply]}
 
 
-def _case(tmp_path, rd, verdict="amber", det_level="amber"):
+def _case(tmp_path, rd, verdict="amber", det_level="amber", **extra):
     lib = tmp_path / "lib"
     d = lib / "FIO-3"
     (d / "kadath").mkdir(parents=True)
@@ -92,13 +96,13 @@ def _case(tmp_path, rd, verdict="amber", det_level="amber"):
     (d / "kadath" / "verdict.json").write_text(json.dumps(
         {"verdict": verdict, "decided_by": "deterministic", "confidence": 0.5, "coverage": "full",
          "deterministic": {"level": det_level, "reasons": []}, "model_verdict": "green",
-         "run_dir": rd, "reason": "?"}))
+         "run_dir": rd, "reason": "?", **extra}))
     (d / "kadath" / "report.md").write_text("# Triage\n")
     return library.walk(str(lib))[0]
 
 
 FINAL = {"verdict": "red", "confidence": 0.9, "coverage": "full", "iocs_extra": [], "persistence": ["user"],
-         "reason": "admin created", "evidence": [{"claim": "creates zz_maint", "source": "read_trace", "quote": "zz_maint"}]}
+         "reason": "admin created", "evidence": [{"claim": "creates zz_maint", "source": "read_trace", "quote": "wp_create_user"}]}
 
 
 def test_run_tool_loop_and_upgrade(tmp_path):
@@ -111,7 +115,7 @@ def test_run_tool_loop_and_upgrade(tmp_path):
     v = deepscry.run(case, {"case_id": "FIO-3"}, client, PROMPTS)
     assert v["verdict"] == "red" and v["decided_by"] == "deepscry"
     assert v["deepscry"]["status"] == "ok" and v["deepscry"]["tool_calls"] == 1
-    assert v["deepscry"]["evidence"][0]["quote"] == "zz_maint" and v["deepscry"]["dropped_claims"] == []
+    assert v["deepscry"]["evidence"][0]["quote"] == "wp_create_user" and v["deepscry"]["dropped_claims"] == []
     msgs, kw = client.calls[0]
     assert kw["profile"] == "deepscry" and kw["think"] is True and kw["tools"] == deepscry.TOOLS
     assert msgs[0]["content"].startswith("# The Deep Scrying")
@@ -205,3 +209,86 @@ def test_run_time_cap_holds_amber(tmp_path, monkeypatch):
     v = deepscry.run(case, {"case_id": "FIO-3"}, client, PROMPTS)
     assert v["deepscry"]["status"] == "time-cap"
     assert v["verdict"] == "amber"
+
+
+def _tool_turn():
+    return [{"tool_calls": [{"function": {"name": "read_trace", "arguments": {"pattern": "wp_create_user", "max_lines": 5}}}]},
+            {"content": "done"}]
+
+
+def test_run_static_red_cannot_be_cleared_by_scry(tmp_path):
+    # cavern red routed the case here; a green scry over a green det only gets it to amber
+    case = _case(tmp_path, _run_dir(tmp_path), verdict="red", det_level="green", cavern_verdict="red")
+    v = deepscry.run(case, {"case_id": "FIO-3"}, FakeClient(_tool_turn(), dict(FINAL, verdict="green")), PROMPTS)
+    assert v["verdict"] == "amber" and v["deepscry"]["status"] == "disagreement" and v["decided_by"] == "deepscry"
+    assert v["deepscry"]["model_verdict"] == "green" and v["deepscry"]["evidence"]
+    for key in ("runes_verdict", "model_verdict"):          # same for a runes red / an offer-model red
+        case = _case(tmp_path / key, _run_dir(tmp_path / key), verdict="red", det_level="green", **{key: "red"})
+        v = deepscry.run(case, {"case_id": "FIO-3"}, FakeClient(_tool_turn(), dict(FINAL, verdict="green")), PROMPTS)
+        assert v["verdict"] == "amber" and v["deepscry"]["status"] == "disagreement"
+
+
+def test_run_failed_scry_keeps_static_red_and_decided_by(tmp_path):
+    bad = dict(FINAL, verdict="green", evidence=[{"claim": "benign", "source": "read_dns", "quote": "nothing-here-at-all"}])
+    case = _case(tmp_path, _run_dir(tmp_path), verdict="red", det_level="green", runes_verdict="red")
+    v = deepscry.run(case, {"case_id": "FIO-3"}, FakeClient([{"content": "done"}], bad), PROMPTS)
+    assert v["verdict"] == "red" and v["deepscry"]["status"] == "unverified-claims"
+    assert v["decided_by"] == "deterministic"                 # not "deepscry": it decided nothing
+    # a tool-cap failure behaves the same
+    tc = {"tool_calls": [{"function": {"name": "read_dns", "arguments": {}}}]}
+    case = _case(tmp_path / "b", _run_dir(tmp_path / "b"), verdict="red", det_level="green", cavern_verdict="red")
+    v = deepscry.run(case, {"case_id": "FIO-3"}, FakeClient([tc] * 30, FINAL), PROMPTS)
+    assert v["verdict"] == "red" and v["deepscry"]["status"] == "tool-cap" and v["decided_by"] == "deterministic"
+
+
+def test_run_all_green_prior_scry_amber_upgrades(tmp_path):
+    case = _case(tmp_path, _run_dir(tmp_path), verdict="green", det_level="green",
+                 cavern_verdict="green", runes_verdict="green")
+    v = deepscry.run(case, {"case_id": "FIO-3"}, FakeClient(_tool_turn(), dict(FINAL, verdict="amber")), PROMPTS)
+    assert v["verdict"] == "amber" and v["deepscry"]["status"] == "ok" and v["decided_by"] == "deepscry"
+
+
+def test_run_short_quote_is_dropped(tmp_path):
+    short = dict(FINAL, evidence=[{"claim": "x", "source": "read_trace", "quote": "zz_maint"}])
+    case = _case(tmp_path, _run_dir(tmp_path))
+    v = deepscry.run(case, {"case_id": "FIO-3"}, FakeClient(_tool_turn(), short), PROMPTS)
+    assert v["deepscry"]["status"] == "unverified-claims" and len(v["deepscry"]["dropped_claims"]) == 1
+
+
+def test_dispatch_marks_truncation_and_pages(tmp_path):
+    rd = _run_dir(tmp_path)
+    ev = json.loads(open(os.path.join(rd, "evidence.json")).read())
+    ev["network"]["dns"] = [{"name": f"h{i:04d}.evil.test"} for i in range(1000)]
+    open(os.path.join(rd, "evidence.json"), "w").write(json.dumps(ev))
+    tb = deepscry.ToolBox(rd, str(tmp_path / "s.php"))
+    out = tb.dispatch("read_dns", {})
+    full = len(json.dumps(ev["network"]["dns"], indent=1))
+    assert out.startswith("[\n") and out.endswith(f"\n[truncated: {full - 8000} more chars]")
+    assert len(out) == 8000 + len(f"\n[truncated: {full - 8000} more chars]")
+    assert "[truncated" not in tb.dispatch("read_dropped", {})            # small output: no marker
+    # offset pages by lines: the first line of page 2 follows the last full line of page 1
+    lines = json.dumps(ev["network"]["dns"], indent=1).split("\n")
+    page2 = tb.dispatch("read_dns", {"offset": 1500}).split("\n")
+    assert page2[0] == lines[1500]
+    assert "invalid offset" in tb.dispatch("read_dns", {"offset": "x"})
+    assert tb.dispatch("read_flows", {"offset": 1000}) == ""             # past the end
+    assert "evil.test" in tb.dispatch("read_flows", {"offset": 0})
+    # read_trace: offset skips matching lines
+    first = tb.dispatch("read_trace", {"pattern": "core", "max_lines": 3}).split("\n")
+    nxt = tb.dispatch("read_trace", {"pattern": "core", "max_lines": 3, "offset": 3}).split("\n")
+    assert len(first) == 3 and len(nxt) == 3 and not set(first) & set(nxt)
+    assert tb.dispatch("read_trace", {"pattern": "core", "offset": 10_000}) == "(no more matches)"
+    for t in deepscry.TOOLS:
+        if t["function"]["name"] in ("read_trace", "read_flows", "read_dns", "read_dropped"):
+            assert t["function"]["parameters"]["properties"]["offset"]["type"] == "integer"
+
+
+def test_run_failed_scry_on_green_prior_floors_at_amber(tmp_path):
+    # the case reached the scry because something was unsettled; a scry that decided
+    # nothing must not leave it green
+    tc = {"tool_calls": [{"function": {"name": "read_dns", "arguments": {}}}]}
+    case = _case(tmp_path, _run_dir(tmp_path), verdict="green", det_level="green",
+                 cavern_verdict="green", runes_verdict="green")
+    v = deepscry.run(case, {"case_id": "FIO-3"}, FakeClient([tc] * 30, FINAL), PROMPTS)
+    assert v["verdict"] == "amber" and v["deepscry"]["status"] == "tool-cap"
+    assert v["decided_by"] != "deepscry"

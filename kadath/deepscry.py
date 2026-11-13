@@ -11,21 +11,26 @@ from kadath.cavern import UNTRUSTED_PREAMBLE, load_prompt
 from kadath.pilgrim_offer import VERDICT_SCHEMA, final_verdict, open_text
 
 TOOL_CAP = 25
+OUT_CAP = 8000
+MIN_QUOTE_CHARS = 12      # a shorter quote matches almost any output
+FAILED = ("tool-cap", "time-cap", "unverified-claims")   # the scry decided nothing
 TIME_CAP_S = 900
 WP_ALLOW = ("user list", "option get", "cron event list", "plugin list")
 _SAFE_ARG = re.compile(r"^[A-Za-z0-9_\-.]{1,100}$")
 
+_OFFSET = {"type": "integer", "description": "skip this many output lines (paging)"}
 TOOLS = [
     {"type": "function", "function": {"name": "read_trace",
      "description": "Grep this run's Xdebug traces for a pattern; returns matching lines (function calls with arguments/returns).",
      "parameters": {"type": "object", "required": ["pattern"],
-                    "properties": {"pattern": {"type": "string"}, "max_lines": {"type": "integer"}}}}},
+                    "properties": {"pattern": {"type": "string"}, "max_lines": {"type": "integer"},
+                                   "offset": _OFFSET}}}},
     {"type": "function", "function": {"name": "read_flows", "description": "Decrypted non-core HTTP flows of this run with bodies.",
-     "parameters": {"type": "object", "properties": {}}}},
+     "parameters": {"type": "object", "properties": {"offset": _OFFSET}}}},
     {"type": "function", "function": {"name": "read_dns", "description": "DNS names resolved during this run.",
-     "parameters": {"type": "object", "properties": {}}}},
+     "parameters": {"type": "object", "properties": {"offset": _OFFSET}}}},
     {"type": "function", "function": {"name": "read_dropped", "description": "Blocked non-HTTP egress attempts of this run.",
-     "parameters": {"type": "object", "properties": {}}}},
+     "parameters": {"type": "object", "properties": {"offset": _OFFSET}}}},
     {"type": "function", "function": {"name": "read_sample", "description": "Read a line range of the sample source.",
      "parameters": {"type": "object", "required": ["start_line", "end_line"],
                     "properties": {"start_line": {"type": "integer"}, "end_line": {"type": "integer"}}}}},
@@ -61,11 +66,19 @@ class ToolBox:
         d = os.path.join(self.run_dir, "artifacts", "xdebug")
         return sorted(os.path.join(d, n) for n in os.listdir(d)) if os.path.isdir(d) else []
 
-    def read_trace(self, pattern, max_lines=100):
+    @staticmethod
+    def _page(text, offset):
         try:
-            max_lines = max(1, min(int(max_lines), 200))
+            offset = max(0, int(offset))
         except (TypeError, ValueError):
-            return "invalid max_lines"
+            return "invalid offset"
+        return "\n".join(text.split("\n")[offset:]) if offset else text
+
+    def read_trace(self, pattern, max_lines=100, offset=0):
+        try:
+            max_lines, offset = max(1, min(int(max_lines), 200)), max(0, int(offset))
+        except (TypeError, ValueError):
+            return "invalid max_lines or offset"
         pat = str(pattern)
         out = []
         for p in self._traces():
@@ -77,20 +90,20 @@ class ToolBox:
                 for line in f:
                     if pat in line:
                         out.append(line.rstrip("\n")[:1000])
-                        if len(out) >= max_lines:
-                            return "\n".join(out)
-        return "\n".join(out) if out else "(no match)"
+                        if len(out) >= offset + max_lines:
+                            return "\n".join(out[offset:])
+        return "\n".join(out[offset:]) or ("(no more matches)" if out else "(no match)")
 
-    def read_flows(self, **_):
+    def read_flows(self, offset=0, **_):
         net = self.ev.get("network", {}) or {}
-        return json.dumps({"flows": [f for f in net.get("flows", []) if not f.get("wp_core")],
-                           "bodies": self.ev.get("flow_bodies", [])}, indent=1)
+        return self._page(json.dumps({"flows": [f for f in net.get("flows", []) if not f.get("wp_core")],
+                                      "bodies": self.ev.get("flow_bodies", [])}, indent=1), offset)
 
-    def read_dns(self, **_):
-        return json.dumps((self.ev.get("network", {}) or {}).get("dns", []), indent=1)
+    def read_dns(self, offset=0, **_):
+        return self._page(json.dumps((self.ev.get("network", {}) or {}).get("dns", []), indent=1), offset)
 
-    def read_dropped(self, **_):
-        return json.dumps((self.ev.get("network", {}) or {}).get("dropped", []), indent=1)
+    def read_dropped(self, offset=0, **_):
+        return self._page(json.dumps((self.ev.get("network", {}) or {}).get("dropped", []), indent=1), offset)
 
     def read_sample(self, start_line, end_line):
         try:
@@ -131,7 +144,8 @@ class ToolBox:
                 out = fn(**(args or {}))
             except TypeError as e:
                 out = f"invalid arguments: {e}"
-        out = out[:8000]
+        if len(out) > OUT_CAP:
+            out = out[:OUT_CAP] + f"\n[truncated: {len(out) - OUT_CAP} more chars]"
         self.outputs.append(out)
         return out
 
@@ -140,7 +154,7 @@ def verify_claims(evidence, outputs):
     kept, dropped = [], []
     for e in evidence:
         quote = e.get("quote", "")
-        if quote.strip() and any(quote in o for o in outputs):
+        if len(quote.strip()) >= MIN_QUOTE_CHARS and any(quote in o for o in outputs):
             kept.append(e)
         else:
             dropped.append(e)
@@ -159,10 +173,10 @@ def run(case, row, client, prompts_dir):
              f"coverage {v.get('coverage')}; dependency stubs created: "
              f"{len(v.get('stubs') or [])} (the sample ran against empty stand-ins for those files, "
              "so behaviour that depended on them was not exercised).\n"
-             + (("Fatal lines from this run:\n```text\n" + "\n".join(v.get("fatals") or []) + "\n```\n")
+             + (("Fatal lines from this run:\n```text\n" + "\n".join(v.get("fatals") or []).replace("```", "'''") + "\n```\n")
                 if v.get("fatals") else "")
              + "Deterministic reasons:\n```json\n"
-             f"{json.dumps(v['deterministic'].get('reasons', []))}\n```\n"
+             f"{json.dumps(v['deterministic'].get('reasons', [])).replace('```', chr(39) * 3)}\n```\n"
              "Investigate with the tools, then say you are done.")
     msgs = [{"role": "system", "content": system}, {"role": "user", "content": intro}]
     status = "ok"
@@ -190,15 +204,22 @@ def run(case, row, client, prompts_dir):
                         profile="deepscry", json_schema=SCRY_SCHEMA, think=False, timeout=600,
                         validate=lambda o: llm.validate_against(SCRY_SCHEMA, o))["parsed"]
     kept, dropped = verify_claims(final["evidence"], tb.outputs)
-    if status in ("tool-cap", "time-cap"):
-        level, decided = final_verdict(v["deterministic"]["level"], "amber")[0], "deepscry"
-    elif dropped or not final["evidence"]:
-        status, decided = "unverified-claims", "deepscry"
-        level = final_verdict(v["deterministic"]["level"], "amber")[0]
+    if status == "ok" and (dropped or not final["evidence"]):
+        status = "unverified-claims"
+    det = v["deterministic"]["level"]
+    # the static reads and the offering model that routed the case here are evidence too
+    prior = final_verdict(det, v.get("model_verdict"), v.get("cavern_verdict"), v.get("runes_verdict"))[0]
+    update = {}
+    if status in FAILED:
+        # the scry decided nothing, and the case only got here because something was
+        # unsettled: never below amber, so a human still sees it; decided_by stays as it was
+        level = final_verdict(prior, "amber")[0]
     else:
-        level, _ = final_verdict(v["deterministic"]["level"], final["verdict"])
-        decided = "deepscry"
-    v.update(verdict=level, decided_by=decided, deepscry={
+        level, _ = final_verdict(det, final["verdict"])
+        if prior == "red" and level == "green":
+            level, status = "amber", "disagreement"     # a scry never clears a red alone
+        update["decided_by"] = "deepscry"
+    v.update(update, verdict=level, deepscry={
         "status": status, "model_verdict": final["verdict"], "confidence": final["confidence"],
         "reason": final["reason"], "evidence": kept, "dropped_claims": dropped,
         "iocs_extra": final["iocs_extra"], "persistence": final["persistence"],

@@ -24,7 +24,7 @@ mkdir -p /artifacts/mitm /artifacts/dns /gateway-ca
 # the whole RFC1918 space, link-local, and the Docker host (host.docker.internal,
 # 0.250.250.254 on OrbStack) are reachable through the proxy. Override with
 # GATEWAY_BLOCKED_DESTS in .env (space-separated CIDRs) if a lab needs a private target.
-GATEWAY_BLOCKED_DESTS="${GATEWAY_BLOCKED_DESTS:-10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 169.254.0.0/16 100.64.0.0/10 0.0.0.0/8 127.0.0.0/8}"
+GATEWAY_BLOCKED_DESTS="${GATEWAY_BLOCKED_DESTS:-10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 169.254.0.0/16 100.64.0.0/10 0.0.0.0/8 127.0.0.0/8 198.18.0.0/15 192.0.0.0/24}"
 
 # --- iptables: fail closed. Nothing is forwarded; only mitmproxy/dnsmasq may be reached.
 # Only flush PREROUTING (ours) in the nat table -- a full `-t nat -F` also wipes
@@ -87,7 +87,10 @@ dnsmasq --keep-in-foreground --no-resolv --server=127.0.0.11 --filter-AAAA \
   done
 ) &
 
-# --- mitmweb in transparent mode. The CA lives in the gateway_ca volume so it is stable.
+# --- mitmweb in transparent mode. stream_large_bodies=1m: bodies over 1 MiB are streamed
+# through and NOT stored in the flow (or flows.mitm), which bounds the proxy's memory against
+# a sample that pulls or pushes gigabytes. Such flows keep their headers; the body is absent.
+# The CA lives in the gateway_ca volume so it is stable.
 exec mitmweb \
   --mode transparent --showhost \
   --listen-host 0.0.0.0 --listen-port 8080 \
@@ -95,6 +98,7 @@ exec mitmweb \
   --set web_password="${MITMWEB_PASSWORD:-sandbox}" \
   --set web_open_browser=false \
   --set ssl_insecure=true \
+  --set stream_large_bodies=1m \
   --set confdir=/gateway-ca \
   -w +/artifacts/mitm/flows.mitm \
   ${MITM_EXTRA_ARGS:-}

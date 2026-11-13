@@ -1,5 +1,6 @@
 """Turn a detected sample (or a recipe) into HTTP trigger actions and run them."""
 import os
+import urllib.parse
 from kadath import recipe
 
 _DEFAULT_LOGIN = recipe.Action("login", "admin", "sandbox")
@@ -14,7 +15,7 @@ def default_actions(detected, login=None):
         return [recipe.Action("get", "/")]
     # webshell / loose php
     basename = os.path.basename(detected.dest)
-    return [recipe.Action("get", f"/{basename}"), recipe.Action("get", "/")]
+    return [recipe.Action("get", "/" + urllib.parse.quote(basename, safe="")), recipe.Action("get", "/")]
 
 
 def execute(session, actions):

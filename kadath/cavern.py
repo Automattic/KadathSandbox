@@ -47,12 +47,17 @@ def load_prompt(prompts_dir, name):
     return raw.decode(), hashlib.sha256(raw).hexdigest()
 
 
+def _defang(s):
+    # a ``` inside evidence would close our fence and let the rest read as instructions
+    return str(s).replace("```", "'''")
+
+
 def build_messages(system, case_id, provenance, facts, source_text, truncated):
     note = "\nNOTE: the source view is TRUNCATED (head, tail, and interesting lines only).\n" if truncated else ""
     user = (UNTRUSTED_PREAMBLE
-            + "\n```text\n" + f"Case: {case_id}\nProvenance: {provenance or '(none)'}\n" + "```\n"
-            + "\n```json\n" + json.dumps(facts, indent=1) + "\n```\n"
-            + "\n=== SOURCE (line-numbered) ===" + note + "\n```php\n" + source_text + "\n```\n"
+            + "\n```text\n" + f"Case: {_defang(case_id)}\nProvenance: {_defang(provenance or '(none)')}\n" + "```\n"
+            + "\n```json\n" + _defang(json.dumps(facts, indent=1)) + "\n```\n"
+            + "\n=== SOURCE (line-numbered) ===" + note + "\n```php\n" + _defang(source_text) + "\n```\n"
             + "\nJudge this file. Reply with the JSON object only.")
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
@@ -79,6 +84,11 @@ def override_worthy(parsed, facts):
         reasons.append("network")
     if facts.get("has_blob"):
         reasons.append("blob")
+    # dangerous primitives force a run unless the model is already confidently red
+    # (a confident red needs no run to be acted on)
+    if facts.get("dangerous") and not (parsed.get("verdict") == "red"
+                                       and parsed.get("confidence", 0) >= 0.8):
+        reasons.append("dangerous")
     # Suppress model-based forces for fragments and non-runnable files
     if parsed.get("runnable") is not False and parsed.get("family") != "fragment":
         if parsed.get("confidence", 0) < 0.7:

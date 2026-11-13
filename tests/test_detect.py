@@ -25,3 +25,17 @@ def test_slug_is_kebab():
 def test_missing_raises():
     with pytest.raises(detect.UnsupportedSample):
         detect.detect(f"{FX}/does-not-exist.php")
+
+
+@pytest.mark.parametrize("name", ["index.php", "wp-config.php", ".hidden.php", ".htaccess.php"])
+def test_loose_php_with_refused_basename_is_unsupported(tmp_path, name):
+    p = tmp_path / name
+    p.write_text("<?php echo 1;")
+    with pytest.raises(detect.UnsupportedSample, match="rename"):
+        detect.detect(str(p))
+
+
+def test_reserved_name_with_plugin_header_still_a_plugin(tmp_path):
+    p = tmp_path / "index.php"
+    p.write_text("<?php\n/* Plugin Name: X */\n")
+    assert detect.detect(str(p)).type == "plugin"

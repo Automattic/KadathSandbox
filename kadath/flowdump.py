@@ -12,6 +12,21 @@ def _wp_core(host):
     return h == "wordpress.org" or h.endswith(".wordpress.org")
 
 
+def _dst(flow):
+    """The IP the connection really went to: the upstream peer, else the
+    address the proxy was asked to reach. None when neither is known."""
+    sc = getattr(flow, "server_conn", None)
+    for attr in ("peername", "address"):
+        v = getattr(sc, attr, None)
+        if isinstance(v, (tuple, list)) and v:
+            return str(v[0])
+    return None
+
+
+def _sni(flow):
+    return getattr(getattr(flow, "client_conn", None), "sni", None) or None
+
+
 class FlowDump:
     def __init__(self):
         self.epoch = float(os.environ.get("RUN_EPOCH", "0"))
@@ -25,7 +40,9 @@ class FlowDump:
             "host": host, "method": req.method, "path": req.path,
             "status": flow.response.status_code if flow.response else None,
             "error": error,
-            "wp_core": _wp_core(host),
+            # the Host header is the sample's word: dst/sni let the host side
+            # verify it (network.verify_wp_core); wp_core here is only the claim
+            "wp_core": _wp_core(host), "dst": _dst(flow), "sni": _sni(flow),
         }), flush=True)
 
     def response(self, flow):

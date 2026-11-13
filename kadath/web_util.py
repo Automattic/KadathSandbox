@@ -1,8 +1,10 @@
 """Pure helpers for the web server: multipart parsing, filename/host/path safety.
 Standard library only."""
 import email
+import email.message
+import email.utils
 import os
-import re
+import posixpath
 
 
 def parse_multipart(content_type, body):
@@ -14,8 +16,9 @@ def parse_multipart(content_type, body):
     if not msg.is_multipart():
         return fields, files
     for part in msg.get_payload():
-        name = part.get_param("name", header="content-disposition")
-        filename = part.get_param("filename", header="content-disposition")
+        disp = _disposition(part)
+        name = _param_str(disp.get_param("name", header="content-disposition"))
+        filename = _param_str(disp.get_param("filename", header="content-disposition"))
         payload = part.get_payload(decode=True) or b""
         if filename is not None:
             files[name] = (filename, payload)
@@ -24,26 +27,67 @@ def parse_multipart(content_type, body):
     return fields, files
 
 
+def _disposition(part):
+    """A Message holding only this part's Content-Disposition, UTF-8 decoded.
+    WHY: browsers send raw UTF-8 in filename=; the email parser keeps those bytes
+    as surrogates and get_param on the part would turn them into U+FFFD."""
+    raw = next((v for k, v in part.raw_items() if k.lower() == "content-disposition"), "")
+    m = email.message.Message()
+    m["Content-Disposition"] = raw.encode("utf-8", "surrogateescape").decode("utf-8", "replace")
+    return m
+
+
+def _param_str(v):
+    """get_param returns a (charset, lang, value) tuple for RFC 2231 `name*=`."""
+    if isinstance(v, tuple):
+        try:
+            v = email.utils.collapse_rfc2231_value(v)
+        except Exception:
+            v = v[-1]
+    if isinstance(v, bytes):
+        v = v.decode("utf-8", "replace")
+    return v
+
+
+MAX_FILENAME = 100
+
+
 def sanitize_filename(name):
-    base = os.path.basename((name or "").replace("\\", "/"))
-    base = re.sub(r"[^A-Za-z0-9._-]", "_", base).strip("_.") or "sample"
-    return base
+    base = posixpath.basename((_param_str(name) or "").replace("\\", "/"))
+    # WHY isalnum per char: keep Unicode letters so the extension survives
+    base = "".join(c if (c.isalnum() or c in "._-") else "_" for c in base)
+    stem, ext = os.path.splitext(base)
+    if len(ext) < 2:
+        ext = ""
+    ext = ext[:32]
+    stem = stem.lstrip(".").strip("_") or "sample"
+    return stem[:MAX_FILENAME - len(ext)] + ext
 
 
 def host_allowed(host_header, port):
     return (host_header or "") in (f"127.0.0.1:{port}", f"localhost:{port}")
 
 
+def origin_allowed(origin, port):
+    """An Origin header is acceptable only if it is http://<an allowed host>."""
+    origin = origin or ""
+    return origin.startswith("http://") and host_allowed(origin[len("http://"):], port)
+
+
 def artifact_allowlist(summary, report_dir):
-    allow = set()
-    arts = summary.get("artifacts", {})
+    """Ordered, de-duplicated: report files, then the durable bundle, then the
+    live paths. safe_artifact_path serves the first basename match, so the
+    order is the precedence."""
+    arts = summary.get("artifacts") or {}
+    paths = [os.path.join(report_dir, n) for n in ("summary.json", "iocs.json", "run.env")]
+    paths += [os.path.join(report_dir, p) for p in arts.get("bundle") or []]   # relative to the report dir
     for key in ("traces", "sp_dumps", "pcaps"):
-        for p in arts.get(key, []):
-            allow.add(os.path.realpath(p))
-    for p in arts.get("bundle", []):    # durable copies, relative to the report dir
-        allow.add(os.path.realpath(os.path.join(report_dir, p)))
-    for name in ("summary.json", "iocs.json", "run.env"):
-        allow.add(os.path.realpath(os.path.join(report_dir, name)))
+        paths += list(arts.get(key) or [])
+    allow = []
+    for p in paths:
+        rp = os.path.realpath(p)
+        if rp not in allow:
+            allow.append(rp)
     return allow
 
 

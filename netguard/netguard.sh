@@ -15,10 +15,7 @@ if [ -z "$INT" ] || [ -z "$MGMT" ]; then
   exit 1
 fi
 
-# 1. Only one way out: the gateway on the internal network.
-ip route replace default via "$GW" dev "$INT"
-
-# 2. Netns firewall. Default deny in every direction.
+# 1. Netns firewall. Default deny in every direction.
 iptables -F
 iptables -t nat -F
 iptables -P INPUT DROP
@@ -36,9 +33,23 @@ iptables -A INPUT  -i "$MGMT" -p tcp --dport 8080 -m conntrack --ctstate NEW -j 
 iptables -A OUTPUT -o "$INT" -d "$GW"  -j ACCEPT
 iptables -A OUTPUT -o "$INT" -d "$DB"  -j ACCEPT
 iptables -A OUTPUT -o "$INT" -d "$NET" -j DROP
-# Anything left is default-route traffic for the outside world: it is addressed past the
-# internal subnet and the gateway terminates it in mitmproxy or dnsmasq.
-iptables -A OUTPUT -o "$INT" -j ACCEPT
+# Broadcast, multicast and anycast are link-local by nature: they would reach the Docker
+# host's bridge (and any neighbour) directly, never passing the gateway. Drop them
+# explicitly before the catch-all, which then only accepts unicast.
+iptables -A OUTPUT -o "$INT" -m addrtype --dst-type BROADCAST,MULTICAST,ANYCAST -j DROP
+# Anything left is unicast default-route traffic for the outside world: it is addressed
+# past the internal subnet and the gateway terminates it in mitmproxy or dnsmasq.
+iptables -A OUTPUT -o "$INT" -m addrtype --dst-type UNICAST -j ACCEPT
+
+# IPv6 backstop. IPv6 is disabled by sysctl (wpnet in docker-compose.yml), so this normally
+# has nothing to act on; if it is ever enabled, nothing leaves or enters over it. Where the
+# kernel has no IPv6 netfilter at all, ip6tables fails with "Address family not supported".
+{ ip6tables -P INPUT DROP && ip6tables -P OUTPUT DROP && ip6tables -P FORWARD DROP; } \
+  || echo "netguard: ip6tables unavailable (ipv6 off)"
+
+# 2. Only one way out: the gateway on the internal network. Installed last, after the rules,
+# because wordpress's entrypoint treats this route as proof that netguard finished.
+ip route replace default via "$GW" dev "$INT"
 
 echo "netguard: internal=$INT mgmt=$MGMT"
 ip route

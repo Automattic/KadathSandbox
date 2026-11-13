@@ -181,3 +181,21 @@ def test_walk_keeps_a_sample_in_a_nested_dir_named_kadath(tmp_path):
     (d / "vendor" / "kadath" / "shell.php").write_text("<?php system($_GET['c']);")
     case = [c for c in library.walk(str(tmp_path)) if c.id == "FIO-2"][0]
     assert case.php is not None and case.php.endswith("shell.php") and case.skip_reason is None
+
+
+def test_walk_skips_symlinked_php_and_case_dirs(tmp_path, capsys):
+    lib = tmp_path / "lib"; lib.mkdir()
+    secret = tmp_path / "secret.txt"; secret.write_text("root:x:0:0")
+    real = _mk(lib, "FIO-1", {"a.php": "<?php"})
+    os.symlink(str(secret), str(real / "x.php"))               # symlinked .php beside a real one
+    only = _mk(lib, "FIO-2", {})
+    os.symlink(str(secret), str(only / "y.php"))               # only a symlinked .php
+    target = tmp_path / "elsewhere"; target.mkdir(); (target / "z.php").write_text("<?php")
+    os.symlink(str(target), str(lib / "FIO-3"))                # case dir is a symlink
+    cases = {c.id: c for c in library.walk(str(lib))}
+    assert sorted(cases) == ["FIO-1", "FIO-2"]
+    assert cases["FIO-1"].skip_reason is None and cases["FIO-1"].php.endswith("a.php")
+    assert cases["FIO-2"].skip_reason == "no-php" and cases["FIO-2"].php is None
+    err = capsys.readouterr().err
+    assert err.count("skipping symlink") == 3
+    assert "x.php" in err and "y.php" in err and "FIO-3" in err

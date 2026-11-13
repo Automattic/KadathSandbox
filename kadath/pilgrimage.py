@@ -89,12 +89,29 @@ def _stack_up():
     sh(["make", "selftest"], cwd=ROOT, timeout=600)
 
 
+def _wordpress_running(ps):
+    """`docker compose ps --format json` is one object per line or one array;
+    healthy iff the wordpress service itself is running (not just any container)."""
+    try:
+        data = json.loads(ps)
+        entries = data if isinstance(data, list) else [data]
+    except ValueError:
+        entries = []
+        for line in ps.splitlines():
+            try:
+                entries.append(json.loads(line))
+            except ValueError:
+                pass
+    return any(isinstance(e, dict) and e.get("Service") == "wordpress"
+               and (e.get("State") == "running" or e.get("Health") == "healthy") for e in entries)
+
+
 def _stack_recover():
     """Return True when the stack was healthy (the failure was the sample's,
     not the sandbox's); otherwise try one down/up and return False."""
     try:
         ps = sh(["docker", "compose", "ps", "--format", "json"], cwd=ROOT, check=False, timeout=60).stdout
-        if "wordpress" in ps and "running" in ps:
+        if _wordpress_running(ps):
             return True
         sh(["make", "down"], cwd=ROOT, timeout=300)
         sh(["make", "up"], cwd=ROOT, timeout=900)
@@ -223,9 +240,12 @@ def main(argv):
                             cav = json.load(f)
                     except (OSError, ValueError):
                         cav = {}
-                    v = pilgrim_offer._finish_from_runes(kd, cav, rr, e.stderr, client)
+                    # an LLMError after the detonation carries its deterministic verdict and bundle
+                    v = pilgrim_offer._finish_from_runes(kd, cav, rr, e.stderr, client,
+                                                         det=getattr(e, "det", None),
+                                                         run_dir=getattr(e, "run_dir", ""))
                     return {"offer_verdict": v["verdict"], "offer_coverage": v["coverage"],
-                            "run_dir": "", "final_verdict": v["verdict"], "decided_by": v["decided_by"],
+                            "run_dir": v["run_dir"], "final_verdict": v["verdict"], "decided_by": v["decided_by"],
                             "scry_status": "skipped" if _settled(v) else "pending"}
             e.stack_healthy = healthy
             raise
@@ -249,7 +269,11 @@ def main(argv):
             return {"scry_status": "skipped",
                     "error": "no run bundle (verdict came from the Runes static read); nothing to scry"}
         v = deepscry.run(case, row, client, PROMPTS)
-        return {"scry_verdict": v["verdict"], "final_verdict": v["verdict"], "decided_by": "deepscry"}
+        fields = {"scry_verdict": v["verdict"], "final_verdict": v["verdict"]}
+        # a failed scry decided nothing: the earlier decider stands
+        if (v.get("deepscry") or {}).get("status") not in deepscry.FAILED:
+            fields["decided_by"] = "deepscry"
+        return fields
 
     fns = {"cavern": do_cavern, "runes": do_runes, "offer": do_offer, "scry": do_scry}
     for name in a.passes:

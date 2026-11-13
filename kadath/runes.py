@@ -19,6 +19,10 @@ from kadath.pilgrim_offer import IOC_TYPES, ORDER, final_verdict
 MAX_LAYERS = 5
 LAYER_CAP = 2 * 1024 * 1024      # 2 MB per decoded layer
 TOTAL_CAP = 8 * 1024 * 1024      # 8 MB across all layers (decompression-bomb bound)
+# unpack scans only the first MAX_SCAN_BYTES (chars) of a layer and examines at most
+# MAX_MATCHES decoder chains per layer, so hostile input cannot make the regex walk unbounded
+MAX_SCAN_BYTES = 2_000_000
+MAX_MATCHES = 32
 
 _URL = re.compile(rb"(?:https?|ftp)://[^\s'\"<>)]{4,300}")
 _IP = re.compile(rb"\b(?:\d{1,3}\.){3}\d{1,3}\b")
@@ -100,11 +104,15 @@ def unpack(source, max_layers=MAX_LAYERS):
     total = 0
     current = source
     for n in range(1, max_layers + 1):
-        m = _CHAIN.search(current)
-        if not m:
-            break
-        names = _DEC_NAME.findall(m.group(1))
-        decoded = _apply_chain(names, _unescape_php(m.group("lit"), m.group(2)))
+        # a decoy chain that fails to decode must not hide the real payload behind it
+        names = decoded = None
+        for i, m in enumerate(_CHAIN.finditer(current[:MAX_SCAN_BYTES])):
+            if i >= MAX_MATCHES:
+                break
+            names = _DEC_NAME.findall(m.group(1))
+            decoded = _apply_chain(names, _unescape_php(m.group("lit"), m.group(2)))
+            if decoded is not None:
+                break
         if decoded is None:
             break
         total += len(decoded)
